@@ -1,0 +1,16 @@
+# Entorno virtual y cachés de Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Datos generados por los scripts (se regeneran; conjunto_estudio.csv supera
+# el límite de 100 MB de GitHub)
+datos/procesados/
+datos/final/
+
+# Ficheros temporales de Excel/Office
+~$*
+
+# Configuración local de Claude Code
+.claude/settings.local.json
