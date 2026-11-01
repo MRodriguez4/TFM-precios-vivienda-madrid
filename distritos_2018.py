@@ -97,6 +97,7 @@ INDICADORES = [
     ("pct_bachiller_fp2", 2019, "Formación profesional 2º grado", "pct", "1.5.3.", "01/01/2018", "Población de 25 años o más con Bachillerato/BUP/FP2"),
     ("pct_titulados_medios", 2019, "Titulados medios", "pct", "1.5.3.", "01/01/2018", "Población de 25 años o más con diplomatura o ingeniería técnica"),
     ("pct_estudios_superiores", 2019, "Estudios superiores", "pct", "1.5.3.", "01/01/2018", "Población de 25 años o más con licenciatura o estudios superiores"),
+    ("pct_estudios_desconocido", 2019, "Nivel de estudios desconocido", "pct", "1.5.3.", "01/01/2018", "Población de 25 años o más con nivel de estudios desconocido o que no consta"),
     ("pct_alumnos_publica", 2020, "En centros PÚBLICOS", "pct", "1.5.2.", "2017/18", "Alumnos en centros públicos / alumnos, curso 2017/18"),
     ("pct_alumnos_concertada", 2020, "En centros PRIVADOS CONCERTADOS", "pct", "1.5.2.", "2017/18", "Alumnos en centros concertados / alumnos, curso 2017/18"),
     ("pct_alumnos_privada", 2020, "En centros PRIVADOS SIN CONCIERTO", "pct", "1.5.2.", "2017/18", "Alumnos en centros privados / alumnos, curso 2017/18"),
@@ -185,6 +186,9 @@ POR_1000_HAB = [
     "interv_policia_drogas", "accidentes_trafico", "detenidos",
 ]
 
+# Recuentos que además se expresan por km² de superficie del distrito (densidad espacial)
+POR_KM2 = ["mercados_municipales"]
+
 # Bloque de información de cada indicador, para los escenarios del TFM:
 # "entorno_urbano" (forma urbana, dotaciones, zonas verdes, seguridad) y
 # "socioeconomico" (todo lo demás: población, renta, empleo, educación, salud...).
@@ -212,7 +216,116 @@ ENTORNO_URBANO = {
 
 def bloque(col):
     """Bloque (socioeconomico / entorno_urbano) de una columna de la tabla."""
-    return "entorno_urbano" if col.removesuffix("_por_1000_hab") in ENTORNO_URBANO else "socioeconomico"
+    base = col.removesuffix("_por_1000_hab").removesuffix("_por_km2")
+    return "entorno_urbano" if base in ENTORNO_URBANO else "socioeconomico"
+
+
+# Dimensiones conceptuales del contexto: cada indicador pertenece a una sola.
+# "representantes" son los indicadores que miden bien el concepto, por orden de
+# preferencia (medidas relativas antes que recuentos); los demás indicadores de la
+# dimensión se conservan en el conjunto de datos pero no se usan para representarla.
+DIMENSIONES = {
+    # --- Socioeconómico ---
+    "Tamaño del distrito": {
+        "indicadores": ["poblacion", "hogares"],
+        "representantes": []},
+    "Nivel económico": {
+        "indicadores": ["renta_media_hogar", "pension_media_hombres", "pension_media_mujeres",
+                        "valor_catastral_medio_pf", "valor_catastral_medio_pj"],
+        "representantes": ["renta_media_hogar", "valor_catastral_medio_pf"]},
+    "Nivel educativo": {
+        "indicadores": ["pct_estudios_superiores", "pct_titulados_medios", "pct_bachiller_fp2",
+                        "pct_estudios_obligatorios", "pct_primaria_incompleta", "pct_sin_estudios",
+                        "pct_estudios_desconocido"],
+        "representantes": ["pct_estudios_superiores", "pct_sin_estudios"]},
+    "Escolarización": {
+        "indicadores": ["pct_alumnos_privada", "pct_alumnos_concertada", "pct_alumnos_publica"],
+        "representantes": ["pct_alumnos_privada", "pct_alumnos_publica"]},
+    "Mercado de trabajo": {
+        "indicadores": ["tasa_paro", "tasa_paro_mujeres", "tasa_paro_hombres", "pct_parados_larga_duracion",
+                        "pct_parados_con_prestacion", "parados_registrados"],
+        "representantes": ["tasa_paro", "tasa_paro_mujeres", "tasa_paro_hombres"]},
+    "Estructura por edad y sexo": {
+        "indicadores": ["edad_media", "prop_envejecimiento", "prop_juventud", "prop_dependencia",
+                        "prop_sobreenvejecimiento", "pct_0_14", "pct_15_29", "pct_30_44", "pct_45_64",
+                        "pct_65_79", "pct_80_mas", "pct_mujeres"],
+        "representantes": ["edad_media", "prop_envejecimiento", "prop_dependencia"]},
+    "Población extranjera": {
+        "indicadores": ["pct_extranjeros", "prop_inmigrantes", "pct_alumnos_extranjeros"],
+        "representantes": ["pct_extranjeros", "prop_inmigrantes"]},
+    "Composición de los hogares": {
+        "indicadores": ["tamano_medio_hogar", "pct_hogares_monoparentales_mujer",
+                        "pct_hogares_monoparentales_hombre", "pct_hogares_mujer_sola_65",
+                        "pct_hogares_hombre_solo_65"],
+        "representantes": ["tamano_medio_hogar"]},
+    "Dinámica demográfica": {
+        "indicadores": ["tasa_crecimiento_demografico", "tasa_natalidad"],
+        "representantes": ["tasa_crecimiento_demografico"]},
+    "Salud": {
+        "indicadores": ["pct_buena_salud", "esperanza_vida_mujeres", "esperanza_vida_hombres",
+                        "pct_enfermedad_cronica", "pct_hipertension", "pct_diabetes", "pct_obesidad",
+                        "pct_sobrepeso", "pct_sedentarismo", "pct_tabaco_diario", "pct_riesgo_salud_mental",
+                        "personas_discapacidad_por_1000_hab", "personas_discapacidad"],
+        "representantes": ["pct_buena_salud"]},
+    "Vulnerabilidad y servicios sociales": {
+        "indicadores": ["indice_vulnerabilidad", "ranking_vulnerabilidad",
+                        "beneficiarios_prestaciones_por_1000_hab", "solicitudes_rmi_por_1000_hab",
+                        "beneficiarios_prestaciones", "solicitudes_rmi"],
+        "representantes": ["indice_vulnerabilidad", "beneficiarios_prestaciones_por_1000_hab"]},
+    # --- Entorno urbano ---
+    "Densidad urbana": {
+        "indicadores": ["densidad_hab_ha", "superficie_ha"],
+        "representantes": ["densidad_hab_ha"]},
+    "Zonas verdes": {
+        "indicadores": ["zonas_verdes_parques_distrito_ha_10000hab_2019", "zona_verde_m2_hab_2016",
+                        "zonas_verdes_parques_distrito_ha_2019", "zonas_verdes_ha_2016",
+                        "parques_historicos_forestales_ha_10000hab_2019",
+                        "parques_historicos_forestales_ha_2019"],
+        "representantes": ["zonas_verdes_parques_distrito_ha_10000hab_2019", "zona_verde_m2_hab_2016"]},
+    "Seguridad": {
+        "indicadores": ["detenidos_por_1000_hab", "interv_policia_patrimonio_por_1000_hab",
+                        "interv_policia_personas_por_1000_hab", "interv_policia_drogas_por_1000_hab",
+                        "interv_policia_armas_por_1000_hab", "detenidos", "interv_policia_patrimonio",
+                        "interv_policia_personas", "interv_policia_drogas", "interv_policia_armas"],
+        "representantes": ["detenidos_por_1000_hab", "interv_policia_patrimonio_por_1000_hab"]},
+    "Tráfico": {
+        "indicadores": ["accidentes_trafico_por_1000_hab", "accidentes_trafico"],
+        "representantes": ["accidentes_trafico_por_1000_hab"]},
+    "Limpieza urbana": {
+        "indicadores": ["residuos_kg_hab_ano"],
+        "representantes": ["residuos_kg_hab_ano"]},
+    "Equipamiento educativo": {
+        "indicadores": ["colegios_publicos", "institutos_publicos", "colegios_privados_con_secundaria",
+                        "colegios_privados_inf_pri", "escuelas_infantiles_municipales",
+                        "escuelas_infantiles_publicas_cam", "escuelas_infantiles_privadas"],
+        "representantes": ["colegios_publicos", "institutos_publicos"]},
+    "Equipamiento cultural": {
+        "indicadores": ["centros_culturales", "bibliotecas_municipales", "bibliotecas_comunidad"],
+        "representantes": ["centros_culturales", "bibliotecas_municipales"]},
+    "Equipamiento deportivo": {
+        "indicadores": ["instalaciones_deportivas_basicas", "centros_deportivos_municipales",
+                        "superficie_deportiva_m2", "instalaciones_acceso_controlado", "campos_futbol_11",
+                        "piscinas_cubiertas", "piscinas_verano", "pistas_atletismo"],
+        "representantes": ["instalaciones_deportivas_basicas", "centros_deportivos_municipales"]},
+    "Equipamiento social y sanitario": {
+        "indicadores": ["centros_servicios_sociales", "centros_mayores", "centros_dia_alzheimer_fisicos",
+                        "apartamentos_mayores", "residencias_mayores", "centros_apoyo_familias",
+                        "centros_atencion_infancia", "centros_dia_infancia", "espacios_ocio_adolescentes",
+                        "centros_adolescentes_jovenes", "centros_personas_sin_hogar", "espacios_igualdad",
+                        "centros_salud_comunitaria", "centros_atencion_adicciones"],
+        "representantes": ["centros_servicios_sociales", "centros_mayores"]},
+    "Comercio de proximidad": {
+        "indicadores": ["mercados_municipales_por_km2", "mercados_municipales"],
+        "representantes": ["mercados_municipales_por_km2"]},
+}
+
+
+def dimension(col):
+    """Dimensión conceptual de una columna de la tabla de indicadores."""
+    for nombre, d in DIMENSIONES.items():
+        if col in d["indicadores"]:
+            return nombre
+    raise KeyError(f"El indicador {col} no está asignado a ninguna dimensión")
 
 
 PATRON_APARTADO = re.compile(r"^\d+\.\d+")
@@ -297,6 +410,8 @@ def construir_tabla():
     tabla = pd.DataFrame(filas)
     for col in POR_1000_HAB:
         tabla[f"{col}_por_1000_hab"] = tabla[col] / tabla["poblacion"] * 1000
+    for col in POR_KM2:
+        tabla[f"{col}_por_km2"] = tabla[col] / (tabla["superficie_ha"] / 100)
     return tabla, avisos
 
 
@@ -310,8 +425,12 @@ def diccionario():
     for col in POR_1000_HAB:
         filas.append({"columna": f"{col}_por_1000_hab", "descripcion": f"{col} por cada 1.000 habitantes",
                       "panel": "calculada", "fecha": "2018"})
+    for col in POR_KM2:
+        filas.append({"columna": f"{col}_por_km2", "descripcion": f"{col} por km² de superficie del distrito",
+                      "panel": "calculada", "fecha": "2019"})
     dicc = pd.DataFrame(filas)
     dicc["bloque"] = [bloque(c) if i >= 2 else "" for i, c in enumerate(dicc["columna"])]
+    dicc["dimension"] = [dimension(c) if i >= 2 else "" for i, c in enumerate(dicc["columna"])]
     return dicc
 
 

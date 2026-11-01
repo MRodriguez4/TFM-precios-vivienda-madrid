@@ -22,6 +22,7 @@ Uso:
 import argparse
 import warnings
 
+import numpy as np
 import pandas as pd
 import requests
 import rdata
@@ -103,22 +104,56 @@ def cargar_pois(ruta):
     )[["TIPO", "Lon", "Lat"]]
 
 
+# Un anuncio que no cae dentro de ninguna zona de idealista se asigna a la zona más cercana
+# si está a menos de esta distancia; si no, queda sin zona.
+MARGEN_ZONA_M = 500
+
+
+def a_metros(geometrias, lat_referencia):
+    """Proyección local aproximada de longitud/latitud a metros (válida a escala de ciudad)."""
+    import shapely
+
+    escala = np.array([111_320 * np.cos(np.radians(lat_referencia)), 110_540])
+    return shapely.transform(geometrias, lambda c: c * escala)
+
+
 def asignar_barrio(ventas, barrios):
-    """Añade a cada anuncio la zona y el distrito en el que se encuentra."""
+    """Añade a cada anuncio la zona y el distrito en el que se encuentra.
+
+    Primero busca la zona que contiene el anuncio. Si no hay ninguna, lo asigna a la zona
+    más cercana cuando está a menos de MARGEN_ZONA_M metros. ASIGNACION_ZONA indica cómo se
+    asignó ("dentro" o "zona más cercana") y DISTANCIA_ZONA_M la distancia a la zona asignada
+    (0 si está dentro o justo en su borde). Ambas quedan vacías si el anuncio no tiene zona.
+    """
     import shapely
 
     puntos = shapely.points(ventas["LONGITUDE"].to_numpy(), ventas["LATITUDE"].to_numpy())
-    arbol = shapely.STRtree(barrios["geometry"].to_numpy())
-    idx_punto, idx_barrio = arbol.query(puntos, predicate="within")
+    zonas = barrios["geometry"].to_numpy()
+    idx_punto, idx_barrio = shapely.STRtree(zonas).query(puntos, predicate="within")
 
     # Un punto en el borde exacto entre dos zonas podría aparecer dos veces
     asignacion = (
-        pd.DataFrame({"punto": idx_punto, "barrio": idx_barrio})
+        pd.DataFrame({"punto": idx_punto, "barrio": idx_barrio, "distancia": 0.0, "metodo": "dentro"})
         .drop_duplicates("punto")
-        .set_index("punto")["barrio"]
+        .set_index("punto")
     )
+
+    # Anuncios fuera de toda zona: zona más cercana, si está a menos de MARGEN_ZONA_M
+    sin_zona = np.setdiff1d(np.arange(len(ventas)), asignacion.index)
+    if len(sin_zona):
+        lat = float(ventas["LATITUDE"].median())
+        zonas_m = a_metros(zonas, lat)
+        puntos_m = a_metros(puntos[sin_zona], lat)
+        (i_punto, i_barrio), distancia = shapely.STRtree(zonas_m).query_nearest(
+            puntos_m, max_distance=MARGEN_ZONA_M, return_distance=True, all_matches=False)
+        cercanos = pd.DataFrame({"punto": sin_zona[i_punto], "barrio": i_barrio, "distancia": distancia,
+                                 "metodo": "zona más cercana"})
+        asignacion = pd.concat([asignacion, cercanos.set_index("punto")])
+
     cols = ["LOCATIONID", "LOCATIONNAME", "COD_DISTRITO", "DISTRITO"]
-    info = barrios[cols].iloc[asignacion.to_numpy()].set_index(asignacion.index)
+    info = barrios[cols].iloc[asignacion["barrio"].to_numpy()].set_index(asignacion.index)
+    info["ASIGNACION_ZONA"] = asignacion["metodo"]
+    info["DISTANCIA_ZONA_M"] = asignacion["distancia"].round(1)
     return ventas.join(info)
 
 
@@ -161,6 +196,8 @@ def main():
     print(ventas["PERIOD"].value_counts().sort_index().to_string())
     if barrios is not None:
         sin_barrio = ventas["LOCATIONID"].isna().sum()
+        cercanos = (ventas["ASIGNACION_ZONA"] == "zona más cercana").sum()
+        print(f"Anuncios asignados a la zona más cercana (a menos de {MARGEN_ZONA_M} m): {cercanos:,}")
         print(f"Anuncios sin barrio asignado: {sin_barrio:,}")
     print(f"\nFicheros guardados en {DIR_IDEALISTA}")
 

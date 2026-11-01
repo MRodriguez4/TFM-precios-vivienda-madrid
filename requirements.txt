@@ -2,5 +2,7 @@ requests
 pandas>=2.0
 rdata>=0.11
 shapely>=2.0
+matplotlib
 openpyxl
 xlrd
+tabulate

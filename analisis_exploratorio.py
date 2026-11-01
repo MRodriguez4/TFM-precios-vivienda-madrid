@@ -1,0 +1,354 @@
+"""
+Análisis exploratorio del conjunto de estudio.
+
+Se ejecuta sobre el conjunto final (75.799 viviendas), una vez definidos los escenarios.
+La selección de variables de construir_conjunto.py no utiliza el precio; este análisis sí lo
+usa, pero es descriptivo y no modifica la composición de D0 a D3. Solo apoya decisiones de
+modelización que afectan por igual a todos los escenarios, como la transformación de la
+variable objetivo.
+
+Análisis:
+    1. Distribución del precio de oferta, en euros, en logaritmo y por m².
+    2. Precio por distrito y por zona, y parte de la variación del precio que se da entre
+       distritos y entre zonas.
+    3. Relación del precio con las variables de la vivienda y la localización (D0 y D1).
+    4. Relación de los 8 indicadores de contexto (D2 y D3) con el precio de su distrito.
+    5. Extrapolación en la validación espacial: indicadores de cada distrito que quedan fuera
+       del rango de los otros 20.
+    6. Dependencia espacial del precio: índice de Moran del precio por m² entre zonas vecinas.
+    7. Tamaño de los pliegues de la validación espacial por distritos.
+
+Requiere haber ejecutado antes construir_conjunto.py.
+
+Salida (en datos/procesados/exploratorio/):
+    - 01_precio.csv: estadísticos del precio, de su logaritmo y del precio por m².
+    - 02_distritos.csv: viviendas y precio mediano de cada distrito.
+    - 02_varianza_entre_grupos.csv: parte de la varianza del precio que se da entre distritos y entre zonas.
+    - 03_correlaciones_vivienda.csv: correlación de Spearman de cada variable de D0 y D1 con el precio.
+    - 04_contexto_distritos.csv: los 8 indicadores y el precio mediano por m² de cada distrito.
+    - 04_correlaciones_contexto.csv: correlación de cada indicador con el precio del distrito (21 distritos).
+    - 05_extrapolacion_distritos.csv: indicadores de cada distrito fuera del rango de los demás.
+    - 06_dependencia_espacial.csv: índice de Moran del precio por m² entre zonas vecinas.
+    - 07_pliegues_espaciales.csv: distritos y viviendas de cada pliegue de la validación espacial.
+    - figuras/: las figuras del apartado.
+
+Uso:
+    python analisis_exploratorio.py
+"""
+
+import json
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon as ParcheMatplotlib
+from shapely import wkt
+
+from idealista18_madrid import a_metros
+from rutas import CONJUNTO_CSV, DIR_EXPLORATORIO, DIR_IDEALISTA, ESCENARIOS_JSON
+
+DIR_FIGURAS = DIR_EXPLORATORIO / "figuras"
+GRIS = "#7f7f7f"
+SEMILLA = 2018
+# Dos zonas son vecinas si sus límites están a menos de esta distancia: las zonas de idealista
+# no cubren la ciudad sin huecos, así que exigir que se toquen dejaría vecinas sin conectar
+DISTANCIA_VECINAS_M = 100
+PERMUTACIONES_MORAN = 999
+N_PLIEGUES = 5
+AZUL = "#1f5fa8"
+
+
+def cargar():
+    """Conjunto final con el logaritmo del precio y el precio por m², y la definición de escenarios."""
+    conjunto = pd.read_csv(CONJUNTO_CSV, dtype={"COD_DISTRITO": str, "ASSETID": str})
+    escenarios = json.loads(ESCENARIOS_JSON.read_text(encoding="utf-8"))
+    objetivo = escenarios["objetivo"]
+    conjunto["LOG_PRECIO"] = np.log(conjunto[objetivo])
+    conjunto["PRECIO_M2"] = conjunto[objetivo] / conjunto["CONSTRUCTEDAREA"]
+    return conjunto, escenarios
+
+
+def guardar_figura(fig, nombre):
+    fig.tight_layout()
+    fig.savefig(DIR_FIGURAS / nombre, dpi=200)
+    plt.close(fig)
+
+
+# 1. Distribución del precio
+
+def analizar_precio(conjunto, objetivo):
+    columnas = {"precio (€)": conjunto[objetivo], "logaritmo del precio": conjunto["LOG_PRECIO"],
+                "precio por m² (€)": conjunto["PRECIO_M2"]}
+    filas = []
+    for nombre, s in columnas.items():
+        filas.append({"variable": nombre, "n": len(s), "media": s.mean(), "desviacion": s.std(),
+                      "asimetria": s.skew(), "minimo": s.min(), "p1": s.quantile(0.01),
+                      "q1": s.quantile(0.25), "mediana": s.median(), "q3": s.quantile(0.75),
+                      "p99": s.quantile(0.99), "maximo": s.max()})
+    tabla = pd.DataFrame(filas)
+
+    fig, ejes = plt.subplots(1, 2, figsize=(10, 3.8))
+    ejes[0].hist(conjunto[objetivo] / 1e6, bins=100, color=GRIS)
+    ejes[0].set(title="Precio de oferta", xlabel="Millones de €", ylabel="Viviendas")
+    ejes[1].hist(conjunto["LOG_PRECIO"], bins=100, color=AZUL)
+    ejes[1].set(title="Logaritmo del precio de oferta", xlabel="ln(precio)", ylabel="Viviendas")
+    guardar_figura(fig, "01_distribucion_precio.png")
+    return tabla
+
+
+# 2. Precio por distrito y por zona
+
+def parte_entre_grupos(valores, grupos):
+    """Parte de la varianza que se da entre grupos: 1 - suma de cuadrados dentro / total."""
+    total = ((valores - valores.mean()) ** 2).sum()
+    dentro = ((valores - valores.groupby(grupos).transform("mean")) ** 2).sum()
+    return 1 - dentro / total
+
+
+def analizar_distritos(conjunto, objetivo):
+    distritos = (conjunto.groupby(["COD_DISTRITO", "DISTRITO"])
+                 .agg(viviendas=(objetivo, "size"), precio_mediano=(objetivo, "median"),
+                      precio_m2_mediano=("PRECIO_M2", "median"))
+                 .reset_index().sort_values("precio_m2_mediano", ascending=False))
+
+    log_m2 = np.log(conjunto["PRECIO_M2"])
+    varianza = pd.DataFrame([
+        {"variable": variable, "agrupacion": agrupacion, "grupos": conjunto[col].nunique(),
+         "parte_entre_grupos": round(parte_entre_grupos(valores, conjunto[col]), 4)}
+        for variable, valores in [("logaritmo del precio", conjunto["LOG_PRECIO"]),
+                                  ("logaritmo del precio por m²", log_m2)]
+        for agrupacion, col in [("distrito", "COD_DISTRITO"), ("zona de idealista", "LOCATIONID")]
+    ])
+
+    # Diagrama de cajas del precio por m² por distrito, ordenado por la mediana
+    orden = distritos.sort_values("precio_m2_mediano")["COD_DISTRITO"].tolist()
+    nombres = distritos.set_index("COD_DISTRITO").loc[orden, "DISTRITO"].tolist()
+    datos = [conjunto.loc[conjunto.COD_DISTRITO == c, "PRECIO_M2"] for c in orden]
+    fig, eje = plt.subplots(figsize=(9, 6.5))
+    eje.boxplot(datos, vert=False, showfliers=False, patch_artist=True,
+                boxprops={"facecolor": "#dfe7f2", "color": GRIS}, medianprops={"color": AZUL},
+                whiskerprops={"color": GRIS}, capprops={"color": GRIS})
+    eje.set_yticks(range(1, len(nombres) + 1), nombres)
+    eje.set(title="Precio de oferta por m² en cada distrito", xlabel="€ por m² (sin valores atípicos)")
+    guardar_figura(fig, "02_precio_m2_distritos.png")
+
+    mapa_por_zona(conjunto)
+    return distritos, varianza
+
+
+def mapa_por_zona(conjunto):
+    """Mapa del precio mediano por m² en cada zona de idealista."""
+    zonas = pd.read_csv(DIR_IDEALISTA / "madrid_barrios.csv")
+    mediana = conjunto.groupby("LOCATIONID")["PRECIO_M2"].median()
+    zonas["precio_m2"] = zonas["LOCATIONID"].map(mediana)
+
+    parches, valores = [], []
+    for geometria, valor in zip(zonas["geometry"].map(wkt.loads), zonas["precio_m2"]):
+        for poligono in geometria.geoms:
+            parches.append(ParcheMatplotlib(np.asarray(poligono.exterior.coords), closed=True))
+            valores.append(valor)
+    coleccion = PatchCollection(parches, cmap="Blues", edgecolor="white", linewidth=0.3)
+    coleccion.set_array(np.array(valores))
+
+    fig, eje = plt.subplots(figsize=(7, 7.5))
+    eje.add_collection(coleccion)
+    eje.autoscale_view()
+    eje.set_aspect(1 / np.cos(np.radians(40.42)))
+    eje.set_axis_off()
+    eje.set_title("Precio mediano de oferta por m² en cada zona de idealista")
+    fig.colorbar(coleccion, ax=eje, shrink=0.6, label="€ por m²")
+    guardar_figura(fig, "02_mapa_precio_m2_zonas.png")
+
+
+# 3. Precio y variables de la vivienda y la localización
+
+def analizar_vivienda(conjunto, escenarios, objetivo):
+    variables = escenarios["escenarios"]["D1"]
+    d0 = set(escenarios["escenarios"]["D0"])
+    filas = []
+    for col in variables:
+        pares = conjunto[[col, objetivo]].dropna()
+        filas.append({"variable": col, "escenario": "D0" if col in d0 else "D1", "n": len(pares),
+                      "spearman_con_precio": round(pares[col].corr(pares[objetivo], method="spearman"), 4)})
+    tabla = pd.DataFrame(filas).sort_values("spearman_con_precio", key=abs, ascending=False)
+
+    fig, ejes = plt.subplots(1, 2, figsize=(10, 4))
+    ejes[0].hexbin(np.log(conjunto["CONSTRUCTEDAREA"]), conjunto["LOG_PRECIO"], gridsize=60,
+                   cmap="Blues", bins="log", mincnt=1)
+    ejes[0].set(title="Precio y superficie", xlabel="ln(superficie construida, m²)", ylabel="ln(precio)")
+    ejes[1].hexbin(conjunto["DISTANCE_TO_CITY_CENTER"], conjunto["PRECIO_M2"], gridsize=60,
+                   cmap="Blues", bins="log", mincnt=1)
+    ejes[1].set(title="Precio por m² y distancia al centro", xlabel="Distancia al centro (km)",
+                ylabel="€ por m²")
+    guardar_figura(fig, "03_precio_vivienda_localizacion.png")
+    return tabla
+
+
+# 4. Indicadores de contexto y precio del distrito
+
+def analizar_contexto(conjunto, escenarios, distritos):
+    d1 = set(escenarios["escenarios"]["D1"])
+    d2 = set(escenarios["escenarios"]["D2"])
+    indicadores = [c for c in escenarios["escenarios"]["D3"] if c not in d1]
+
+    # Los indicadores son constantes dentro de cada distrito: se toma su valor una vez
+    contexto = (conjunto.groupby("COD_DISTRITO")[indicadores].first().reset_index()
+                .merge(distritos, on="COD_DISTRITO"))
+    correlaciones = pd.DataFrame([
+        {"indicador": c, "escenario": "D2" if c in d2 else "D3", "distritos": len(contexto),
+         "pearson_con_precio_m2_mediano": round(contexto[c].corr(contexto["precio_m2_mediano"]), 4),
+         "spearman_con_precio_m2_mediano": round(contexto[c].corr(contexto["precio_m2_mediano"],
+                                                                    method="spearman"), 4)}
+        for c in indicadores
+    ])
+
+    fig, ejes = plt.subplots(2, 4, figsize=(13, 6.5), sharey=True)
+    for eje, fila in zip(ejes.flat, correlaciones.itertuples()):
+        color = AZUL if fila.escenario == "D2" else GRIS
+        eje.scatter(contexto[fila.indicador], contexto["precio_m2_mediano"], color=color, s=22)
+        eje.set_title(f"{fila.escenario}: {fila.indicador}\nr = {fila.pearson_con_precio_m2_mediano:.2f}",
+                      fontsize=8)
+        eje.tick_params(labelsize=7)
+    for eje in ejes[:, 0]:
+        eje.set_ylabel("€ por m², mediana del distrito", fontsize=8)
+    fig.suptitle("Indicadores de contexto y precio por m² de los 21 distritos", fontsize=11)
+    guardar_figura(fig, "04_contexto_precio_distritos.png")
+    return contexto, correlaciones
+
+
+# 5. Extrapolación en la validación espacial
+
+def analizar_extrapolacion(contexto, correlaciones):
+    """Para cada distrito, indicadores cuyo valor queda fuera del rango de los otros 20.
+
+    Si ese distrito se reserva para la evaluación, el modelo tendrá que predecir con valores
+    de contexto que no ha visto al entrenar.
+    """
+    indicadores = correlaciones["indicador"].tolist()
+    filas = []
+    for i, fila in contexto.iterrows():
+        resto = contexto.drop(index=i)
+        fuera = [c for c in indicadores if not resto[c].min() <= fila[c] <= resto[c].max()]
+        filas.append({"COD_DISTRITO": fila["COD_DISTRITO"], "DISTRITO": fila["DISTRITO"],
+                      "viviendas": fila["viviendas"], "indicadores_fuera_de_rango": len(fuera),
+                      "indicadores": ", ".join(fuera)})
+    return pd.DataFrame(filas).sort_values(["indicadores_fuera_de_rango", "COD_DISTRITO"],
+                                           ascending=[False, True])
+
+
+# 6. Dependencia espacial del precio
+
+def indice_moran(valores, pesos):
+    """Índice de Moran con una matriz de pesos estandarizada por filas."""
+    z = valores - valores.mean()
+    return len(z) / pesos.sum() * (z @ pesos @ z) / (z @ z)
+
+
+def analizar_dependencia_espacial(conjunto):
+    """Índice de Moran del precio mediano por m² de las zonas, con zonas vecinas como referencia."""
+    zonas = pd.read_csv(DIR_IDEALISTA / "madrid_barrios.csv")
+    zonas = zonas[zonas["LOCATIONID"].isin(conjunto["LOCATIONID"])].reset_index(drop=True)
+    valores = zonas["LOCATIONID"].map(conjunto.groupby("LOCATIONID")["PRECIO_M2"].median()).to_numpy()
+
+    geometrias = a_metros(zonas["geometry"].map(wkt.loads).to_numpy(), float(conjunto["LATITUDE"].median()))
+    n = len(zonas)
+    vecinas = np.array([[i != j and geometrias[i].distance(geometrias[j]) < DISTANCIA_VECINAS_M
+                         for j in range(n)] for i in range(n)], dtype=float)
+    pesos = vecinas / vecinas.sum(axis=1, keepdims=True)
+
+    observado = indice_moran(valores, pesos)
+    azar = np.random.default_rng(SEMILLA)
+    permutados = np.array([indice_moran(azar.permutation(valores), pesos) for _ in range(PERMUTACIONES_MORAN)])
+    p_valor = (1 + (permutados >= observado).sum()) / (1 + PERMUTACIONES_MORAN)
+    return pd.DataFrame([
+        ("Zonas", n),
+        (f"Criterio de vecindad: límites a menos de {DISTANCIA_VECINAS_M} m", ""),
+        ("Vecinas por zona (mínimo / mediana / máximo)",
+         f"{int(vecinas.sum(1).min())} / {int(np.median(vecinas.sum(1)))} / {int(vecinas.sum(1).max())}"),
+        ("Índice de Moran del precio mediano por m²", round(observado, 4)),
+        ("Valor esperado sin dependencia espacial", round(-1 / (n - 1), 4)),
+        (f"Índice de Moran máximo en {PERMUTACIONES_MORAN} permutaciones al azar", round(permutados.max(), 4)),
+        ("p-valor (permutaciones)", round(p_valor, 4)),
+    ], columns=["comprobacion", "resultado"])
+
+
+# 7. Pliegues de la validación espacial
+
+def analizar_pliegues(contexto, correlaciones):
+    """Reparto de los distritos en N_PLIEGUES grupos de tamaño parecido.
+
+    Sigue el criterio de GroupKFold de scikit-learn: los distritos, de mayor a menor número de
+    viviendas, se asignan uno a uno al pliegue que tiene menos viviendas en ese momento. Para
+    cada pliegue se cuenta además cuántos indicadores de sus distritos quedan fuera del rango
+    de los distritos con los que se entrenaría el modelo.
+    """
+    viviendas = [0] * N_PLIEGUES
+    asignacion = {}
+    for fila in contexto.sort_values("viviendas", ascending=False).itertuples():
+        pliegue = int(np.argmin(viviendas))
+        viviendas[pliegue] += fila.viviendas
+        asignacion.setdefault(pliegue, []).append(fila.DISTRITO)
+
+    indicadores = correlaciones["indicador"].tolist()
+    total = sum(viviendas)
+    filas = []
+    for k in range(N_PLIEGUES):
+        evaluacion = contexto[contexto["DISTRITO"].isin(asignacion[k])]
+        entrenamiento = contexto[~contexto["DISTRITO"].isin(asignacion[k])]
+        fuera = [(d, c) for d, fila in zip(evaluacion["DISTRITO"], evaluacion.itertuples()) for c in indicadores
+                 if not entrenamiento[c].min() <= getattr(fila, c) <= entrenamiento[c].max()]
+        filas.append({"pliegue": k + 1, "distritos": len(asignacion[k]), "viviendas": viviendas[k],
+                      "pct_viviendas": round(100 * viviendas[k] / total, 1),
+                      "nombres": ", ".join(asignacion[k]),
+                      "distritos_con_indicadores_fuera_de_rango": len({d for d, _ in fuera}),
+                      "indicadores_fuera_de_rango": len(fuera)})
+    return pd.DataFrame(filas)
+
+
+def main():
+    conjunto, escenarios = cargar()
+    objetivo = escenarios["objetivo"]
+    DIR_FIGURAS.mkdir(parents=True, exist_ok=True)
+
+    precio = analizar_precio(conjunto, objetivo)
+    distritos, varianza = analizar_distritos(conjunto, objetivo)
+    vivienda = analizar_vivienda(conjunto, escenarios, objetivo)
+    contexto, correlaciones = analizar_contexto(conjunto, escenarios, distritos)
+    extrapolacion = analizar_extrapolacion(contexto, correlaciones)
+    dependencia = analizar_dependencia_espacial(conjunto)
+    pliegues = analizar_pliegues(contexto, correlaciones)
+
+    salidas = {"01_precio": precio, "02_distritos": distritos, "02_varianza_entre_grupos": varianza,
+               "03_correlaciones_vivienda": vivienda, "04_contexto_distritos": contexto,
+               "04_correlaciones_contexto": correlaciones, "05_extrapolacion_distritos": extrapolacion,
+               "06_dependencia_espacial": dependencia, "07_pliegues_espaciales": pliegues}
+    for nombre, tabla in salidas.items():
+        tabla.to_csv(DIR_EXPLORATORIO / f"{nombre}.csv", index=False, encoding="utf-8-sig")
+
+    pd.set_option("display.width", 200)
+    print(f"Viviendas analizadas: {len(conjunto):,}\n")
+    print("Precio:")
+    print(precio.round(3).to_string(index=False))
+    print("\nParte de la varianza entre grupos:")
+    print(varianza.to_string(index=False))
+    print("\nDistritos (precio por m² mediano):")
+    print(distritos.round(0).to_string(index=False))
+    print("\nCorrelación de Spearman con el precio (D0 y D1, 10 primeras):")
+    print(vivienda.head(10).to_string(index=False))
+    print("\nIndicadores de contexto y precio por m² del distrito (21 distritos):")
+    print(correlaciones.to_string(index=False))
+    print("\nIndicadores de cada distrito fuera del rango de los otros 20:")
+    print(extrapolacion.to_string(index=False))
+    print("\nDependencia espacial del precio:")
+    print(dependencia.to_string(index=False))
+    print(f"\nPliegues de la validación espacial ({N_PLIEGUES} grupos de distritos):")
+    print(pliegues.to_string(index=False))
+    print(f"\nFicheros guardados en {DIR_EXPLORATORIO}")
+
+
+if __name__ == "__main__":
+    main()
