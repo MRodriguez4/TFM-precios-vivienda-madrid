@@ -92,19 +92,19 @@ MIN_VALORES_DISTINTOS = 5
 MAX_R_POBLACION = 0.8
 MAX_R_ENTRE_ELEGIDAS = 0.9
 # Cuatro dimensiones por bloque, todas respaldadas en el estado del arte del TFM
-# (capítulo 2.2). La accesibilidad al transporte ya está en D1 (distancia al metro).
+# (apartado 2.2). La accesibilidad al transporte ya está en D1 (distancia al metro).
 DIMENSIONES_SELECCIONADAS = {
     "socioeconomico": [
         "Nivel económico",             # Bayer, Ferreira y McMillan (2007)
-        "Nivel educativo",             # Marmolejo-Duarte (2017)
+        "Nivel educativo",             # Bayer et al. (2007); Marmolejo-Duarte (2017)
         "Población extranjera",        # Saiz y Wachter (2011)
         "Estructura por edad y sexo",  # Mankiw y Weil (1989)
     ],
     "entorno_urbano": [
-        "Densidad urbana",             # Marmolejo-Duarte (2017): densidad edificada
+        "Densidad urbana",             # Ahlfeldt y Pietrostefani (2019)
         "Zonas verdes",                # Panduro y Veie (2013)
         "Seguridad",                   # Gibbons y Machin (2008)
-        "Comercio de proximidad",      # Gibbons y Machin (2008)
+        "Comercio de proximidad",      # Koster y Rouwendal (2012); Pope y Pope (2015)
     ],
 }
 
