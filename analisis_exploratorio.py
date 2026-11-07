@@ -42,6 +42,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.collections import PatchCollection
+from matplotlib.colors import LogNorm
 from matplotlib.patches import Polygon as ParcheMatplotlib
 from shapely import wkt
 
@@ -173,15 +174,30 @@ def analizar_vivienda(conjunto, escenarios, objetivo):
                       "spearman_con_precio": round(pares[col].corr(pares[objetivo], method="spearman"), 4)})
     tabla = pd.DataFrame(filas).sort_values("spearman_con_precio", key=abs, ascending=False)
 
-    fig, ejes = plt.subplots(1, 2, figsize=(10, 4))
-    ejes[0].hexbin(np.log(conjunto["CONSTRUCTEDAREA"]), conjunto["LOG_PRECIO"], gridsize=60,
-                   cmap="Blues", bins="log", mincnt=1)
-    ejes[0].set(title="Precio y superficie", xlabel="ln(superficie construida, m²)", ylabel="ln(precio)")
-    ejes[1].hexbin(conjunto["DISTANCE_TO_CITY_CENTER"], conjunto["PRECIO_M2"], gridsize=60,
-                   cmap="Blues", bins="log", mincnt=1)
+    # Superficie y precio en escala logarítmica: se leen los valores reales, no sus logaritmos
+    fig, ejes = plt.subplots(1, 2, figsize=(11, 4.2), layout="constrained")
+    superficie = ejes[0].hexbin(conjunto["CONSTRUCTEDAREA"], conjunto[objetivo] / 1e3, gridsize=60,
+                                xscale="log", yscale="log", cmap="Blues", mincnt=1)
+    ejes[0].set(title="Precio y superficie", xlabel="Superficie construida (m², escala logarítmica)",
+                ylabel="Precio (miles de €, escala logarítmica)")
+    ejes[0].set_xticks([25, 50, 100, 200, 500, 1000], ["25", "50", "100", "200", "500", "1.000"])
+    ejes[0].set_yticks([50, 100, 200, 500, 1000, 2000, 5000],
+                       ["50", "100", "200", "500", "1.000", "2.000", "5.000"])
+    ejes[0].minorticks_off()
+    distancia = ejes[1].hexbin(conjunto["DISTANCE_TO_CITY_CENTER"], conjunto["PRECIO_M2"], gridsize=60,
+                               cmap="Blues", mincnt=1)
     ejes[1].set(title="Precio por m² y distancia al centro", xlabel="Distancia al centro (km)",
                 ylabel="€ por m²")
-    guardar_figura(fig, "03_precio_vivienda_localizacion.png")
+    ejes[1].yaxis.set_major_formatter(lambda valor, _: f"{valor:,.0f}".replace(",", "."))
+
+    # Una sola escala de color para los dos paneles, para que la leyenda sirva para ambos
+    escala = LogNorm(vmin=1, vmax=max(superficie.get_array().max(), distancia.get_array().max()))
+    superficie.set_norm(escala)
+    distancia.set_norm(escala)
+    fig.colorbar(distancia, ax=list(ejes), label="Viviendas por hexágono (escala logarítmica)",
+                 format="%.0f", aspect=30)
+    fig.savefig(DIR_FIGURAS / "03_precio_vivienda_localizacion.png", dpi=200)
+    plt.close(fig)
     return tabla
 
 
