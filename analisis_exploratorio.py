@@ -130,7 +130,7 @@ def analizar_distritos(conjunto, objetivo):
                 boxprops={"facecolor": "#dfe7f2", "color": GRIS}, medianprops={"color": AZUL},
                 whiskerprops={"color": GRIS}, capprops={"color": GRIS})
     eje.set_yticks(range(1, len(nombres) + 1), nombres)
-    eje.set(title="Precio de oferta por m² en cada distrito", xlabel="€ por m² (sin valores atípicos)")
+    eje.set(title="Precio de oferta por m² en cada distrito", xlabel="€ por m² (valores atípicos no representados)")
     guardar_figura(fig, "02_precio_m2_distritos.png")
 
     mapa_por_zona(conjunto)
