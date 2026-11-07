@@ -13,10 +13,8 @@ Análisis:
        distritos y entre zonas.
     3. Relación del precio con las variables de la vivienda y la localización (D0 y D1).
     4. Relación de los 8 indicadores de contexto (D2 y D3) con el precio de su distrito.
-    5. Extrapolación en la validación espacial: indicadores de cada distrito que quedan fuera
-       del rango de los otros 20.
-    6. Dependencia espacial del precio: índice de Moran del precio por m² entre zonas vecinas.
-    7. Tamaño de los pliegues de la validación espacial por distritos.
+    5. Dependencia espacial del precio: índice de Moran del precio por m² entre zonas vecinas.
+    6. Tamaño de los pliegues de la validación espacial por distritos.
 
 Requiere haber ejecutado antes construir_conjunto.py.
 
@@ -27,9 +25,8 @@ Salida (en datos/procesados/exploratorio/):
     - 03_correlaciones_vivienda.csv: correlación de Spearman de cada variable de D0 y D1 con el precio.
     - 04_contexto_distritos.csv: los 8 indicadores y el precio mediano por m² de cada distrito.
     - 04_correlaciones_contexto.csv: correlación de cada indicador con el precio del distrito (21 distritos).
-    - 05_extrapolacion_distritos.csv: indicadores de cada distrito fuera del rango de los demás.
-    - 06_dependencia_espacial.csv: índice de Moran del precio por m² entre zonas vecinas.
-    - 07_pliegues_espaciales.csv: distritos y viviendas de cada pliegue de la validación espacial.
+    - 05_dependencia_espacial.csv: índice de Moran del precio por m² entre zonas vecinas.
+    - 06_pliegues_espaciales.csv: distritos y viviendas de cada pliegue de la validación espacial.
     - figuras/: las figuras del apartado.
 
 Uso:
@@ -220,27 +217,7 @@ def analizar_contexto(conjunto, escenarios, distritos):
     return contexto, correlaciones
 
 
-# 5. Extrapolación en la validación espacial
-
-def analizar_extrapolacion(contexto, correlaciones):
-    """Para cada distrito, indicadores cuyo valor queda fuera del rango de los otros 20.
-
-    Si ese distrito se reserva para la evaluación, el modelo tendrá que predecir con valores
-    de contexto que no ha visto al entrenar.
-    """
-    indicadores = correlaciones["indicador"].tolist()
-    filas = []
-    for i, fila in contexto.iterrows():
-        resto = contexto.drop(index=i)
-        fuera = [c for c in indicadores if not resto[c].min() <= fila[c] <= resto[c].max()]
-        filas.append({"COD_DISTRITO": fila["COD_DISTRITO"], "DISTRITO": fila["DISTRITO"],
-                      "viviendas": fila["viviendas"], "indicadores_fuera_de_rango": len(fuera),
-                      "indicadores": ", ".join(fuera)})
-    return pd.DataFrame(filas).sort_values(["indicadores_fuera_de_rango", "COD_DISTRITO"],
-                                           ascending=[False, True])
-
-
-# 6. Dependencia espacial del precio
+# 5. Dependencia espacial del precio
 
 def indice_moran(valores, pesos):
     """Índice de Moran con una matriz de pesos estandarizada por filas."""
@@ -276,37 +253,27 @@ def analizar_dependencia_espacial(conjunto):
     ], columns=["comprobacion", "resultado"])
 
 
-# 7. Pliegues de la validación espacial
+# 6. Pliegues de la validación espacial
 
-def analizar_pliegues(contexto, correlaciones):
+def analizar_pliegues(distritos):
     """Reparto de los distritos en N_PLIEGUES grupos de tamaño parecido.
 
     Sigue el criterio de GroupKFold de scikit-learn: los distritos, de mayor a menor número de
-    viviendas, se asignan uno a uno al pliegue que tiene menos viviendas en ese momento. Para
-    cada pliegue se cuenta además cuántos indicadores de sus distritos quedan fuera del rango
-    de los distritos con los que se entrenaría el modelo.
+    viviendas, se asignan uno a uno al pliegue que tiene menos viviendas en ese momento.
     """
     viviendas = [0] * N_PLIEGUES
     asignacion = {}
-    for fila in contexto.sort_values("viviendas", ascending=False).itertuples():
+    for fila in distritos.sort_values("viviendas", ascending=False).itertuples():
         pliegue = int(np.argmin(viviendas))
         viviendas[pliegue] += fila.viviendas
         asignacion.setdefault(pliegue, []).append(fila.DISTRITO)
 
-    indicadores = correlaciones["indicador"].tolist()
     total = sum(viviendas)
-    filas = []
-    for k in range(N_PLIEGUES):
-        evaluacion = contexto[contexto["DISTRITO"].isin(asignacion[k])]
-        entrenamiento = contexto[~contexto["DISTRITO"].isin(asignacion[k])]
-        fuera = [(d, c) for d, fila in zip(evaluacion["DISTRITO"], evaluacion.itertuples()) for c in indicadores
-                 if not entrenamiento[c].min() <= getattr(fila, c) <= entrenamiento[c].max()]
-        filas.append({"pliegue": k + 1, "distritos": len(asignacion[k]), "viviendas": viviendas[k],
-                      "pct_viviendas": round(100 * viviendas[k] / total, 1),
-                      "nombres": ", ".join(asignacion[k]),
-                      "distritos_con_indicadores_fuera_de_rango": len({d for d, _ in fuera}),
-                      "indicadores_fuera_de_rango": len(fuera)})
-    return pd.DataFrame(filas)
+    return pd.DataFrame([
+        {"pliegue": k + 1, "distritos": len(asignacion[k]), "viviendas": viviendas[k],
+         "pct_viviendas": round(100 * viviendas[k] / total, 1), "nombres": ", ".join(asignacion[k])}
+        for k in range(N_PLIEGUES)
+    ])
 
 
 def main():
@@ -318,14 +285,13 @@ def main():
     distritos, varianza = analizar_distritos(conjunto, objetivo)
     vivienda = analizar_vivienda(conjunto, escenarios, objetivo)
     contexto, correlaciones = analizar_contexto(conjunto, escenarios, distritos)
-    extrapolacion = analizar_extrapolacion(contexto, correlaciones)
     dependencia = analizar_dependencia_espacial(conjunto)
-    pliegues = analizar_pliegues(contexto, correlaciones)
+    pliegues = analizar_pliegues(distritos)
 
     salidas = {"01_precio": precio, "02_distritos": distritos, "02_varianza_entre_grupos": varianza,
                "03_correlaciones_vivienda": vivienda, "04_contexto_distritos": contexto,
-               "04_correlaciones_contexto": correlaciones, "05_extrapolacion_distritos": extrapolacion,
-               "06_dependencia_espacial": dependencia, "07_pliegues_espaciales": pliegues}
+               "04_correlaciones_contexto": correlaciones, "05_dependencia_espacial": dependencia,
+               "06_pliegues_espaciales": pliegues}
     for nombre, tabla in salidas.items():
         tabla.to_csv(DIR_EXPLORATORIO / f"{nombre}.csv", index=False, encoding="utf-8-sig")
 
@@ -341,8 +307,6 @@ def main():
     print(vivienda.head(10).to_string(index=False))
     print("\nIndicadores de contexto y precio por m² del distrito (21 distritos):")
     print(correlaciones.to_string(index=False))
-    print("\nIndicadores de cada distrito fuera del rango de los otros 20:")
-    print(extrapolacion.to_string(index=False))
     print("\nDependencia espacial del precio:")
     print(dependencia.to_string(index=False))
     print(f"\nPliegues de la validación espacial ({N_PLIEGUES} grupos de distritos):")
