@@ -41,6 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import shapely
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Polygon as ParcheMatplotlib
@@ -96,7 +97,7 @@ def cargar():
 
 def guardar_figura(fig, nombre):
     fig.tight_layout()
-    fig.savefig(DIR_FIGURAS / nombre, dpi=200)
+    fig.savefig(DIR_FIGURAS / nombre, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -113,11 +114,21 @@ def analizar_precio(conjunto, objetivo):
                       "p99": s.quantile(0.99), "maximo": s.max()})
     tabla = pd.DataFrame(filas)
 
+    # El segundo panel muestra el mismo precio en escala logarítmica, con valores en euros
     fig, ejes = plt.subplots(1, 2, figsize=(10, 3.8))
     ejes[0].hist(conjunto[objetivo] / 1e6, bins=100, color=GRIS)
-    ejes[0].set(title="Precio de oferta", xlabel="Millones de €", ylabel="Viviendas")
-    ejes[1].hist(conjunto["LOG_PRECIO"], bins=100, color=AZUL)
-    ejes[1].set(title="Logaritmo del precio de oferta", xlabel="ln(precio)", ylabel="Viviendas")
+    ejes[0].set(title="Precio de oferta", xlabel="Precio (millones de €)", ylabel="Viviendas")
+    limites = np.log10([conjunto[objetivo].min(), conjunto[objetivo].max()])
+    ejes[1].hist(conjunto[objetivo], bins=np.logspace(*limites, 100), color=AZUL)
+    ejes[1].set_xscale("log")
+    marcas = [25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000]
+    ejes[1].set_xticks(marcas, [numero_es(m) for m in marcas], rotation=30)
+    ejes[1].minorticks_off()
+    ejes[1].set(title="Precio de oferta (escala logarítmica)", xlabel="Precio (€, escala logarítmica)",
+                ylabel="Viviendas")
+    for eje in ejes:
+        eje.yaxis.set_major_formatter(formato_eje_es)
+    ejes[0].xaxis.set_major_formatter(formato_eje_es)
     guardar_figura(fig, "01_distribucion_precio.png")
     return tabla
 
@@ -156,6 +167,7 @@ def analizar_distritos(conjunto, objetivo):
                 whiskerprops={"color": GRIS}, capprops={"color": GRIS})
     eje.set_yticks(range(1, len(nombres) + 1), nombres)
     eje.set(title="Precio de oferta por m² en cada distrito", xlabel="€ por m² (valores atípicos no representados)")
+    eje.xaxis.set_major_formatter(formato_eje_es)
     guardar_figura(fig, "02_precio_m2_distritos.png")
 
     mapa_por_zona(conjunto)
@@ -176,13 +188,27 @@ def mapa_por_zona(conjunto):
     coleccion = PatchCollection(parches, cmap="Blues", edgecolor="white", linewidth=0.3)
     coleccion.set_array(np.array(valores))
 
-    fig, eje = plt.subplots(figsize=(7, 7.5))
+    # Contorno de los distritos, como unión de sus zonas, para situarlos en el mapa. Las zonas
+    # de idealista dejan pequeños huecos entre sí: se amplían ligeramente antes de unirlas y se
+    # reducen después, para que el contorno no dibuje esos huecos como límites
+    geometrias = zonas["geometry"].map(wkt.loads)
+    margen = 0.0006  # grados, unos 50-65 m
+    contornos = [shapely.union_all(shapely.buffer(geometrias[zonas["COD_DISTRITO"] == cod].to_numpy(), margen))
+                 .buffer(-margen) for cod in zonas["COD_DISTRITO"].unique()]
+
+    fig, eje = plt.subplots(figsize=(7, 6.5))
     eje.add_collection(coleccion)
+    for contorno in contornos:
+        for poligono in getattr(contorno, "geoms", [contorno]):
+            eje.plot(*poligono.exterior.xy, color="#333333", linewidth=0.9)
     eje.autoscale_view()
     eje.set_aspect(1 / np.cos(np.radians(40.42)))
     eje.set_axis_off()
     eje.set_title("Precio mediano de oferta por m² en cada zona de idealista")
-    fig.colorbar(coleccion, ax=eje, shrink=0.6, label="€ por m²")
+    barra = fig.colorbar(coleccion, ax=eje, shrink=0.6, label="€ por m²")
+    barra.ax.yaxis.set_major_formatter(formato_eje_es)
+    eje.legend(handles=[plt.Line2D([], [], color="#333333", linewidth=0.9, label="Límite de distrito")],
+               loc="lower left", fontsize=8, frameon=False)
     guardar_figura(fig, "02_mapa_precio_m2_zonas.png")
 
 
