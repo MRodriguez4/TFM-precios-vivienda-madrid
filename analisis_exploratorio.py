@@ -59,6 +59,30 @@ PERMUTACIONES_MORAN = 999
 N_PLIEGUES = 5
 AZUL = "#1f5fa8"
 
+# Nombre, unidad del eje y factor de escala de cada indicador en la figura de contexto
+ETIQUETAS_CONTEXTO = {
+    "renta_media_hogar": ("Renta media de los hogares", "€ al año", 1),
+    "pct_estudios_superiores": ("Población con estudios superiores", "% de la población de 25 años o más", 100),
+    "pct_extranjeros": ("Población extranjera", "% de la población", 100),
+    "edad_media": ("Edad media", "años", 1),
+    "densidad_hab_ha": ("Densidad de población", "habitantes por hectárea", 1),
+    "zonas_verdes_parques_distrito_ha_10000hab_2019": ("Zonas verdes y parques de distrito",
+                                                       "ha por 10.000 habitantes", 1),
+    "detenidos_por_1000_hab": ("Detenidos", "por cada 1.000 habitantes", 1),
+    "mercados_municipales_por_km2": ("Mercados municipales", "por km²", 1),
+}
+
+
+def numero_es(valor, decimales=0):
+    """Número con punto de miles y coma decimal."""
+    return f"{valor:,.{decimales}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formato_eje_es(valor, _):
+    """Marcas de eje en notación española, con los decimales justos."""
+    decimales = next((d for d in range(3) if abs(valor * 10 ** d - round(valor * 10 ** d)) < 1e-9), 2)
+    return numero_es(valor, decimales)
+
 
 def cargar():
     """Conjunto final con el logaritmo del precio y el precio por m², y la definición de escenarios."""
@@ -219,17 +243,29 @@ def analizar_contexto(conjunto, escenarios, distritos):
         for c in indicadores
     ])
 
-    fig, ejes = plt.subplots(2, 4, figsize=(13, 6.5), sharey=True)
+    fig, ejes = plt.subplots(2, 4, figsize=(13, 7), sharey=True, layout="constrained")
     for eje, fila in zip(ejes.flat, correlaciones.itertuples()):
-        color = AZUL if fila.escenario == "D2" else GRIS
-        eje.scatter(contexto[fila.indicador], contexto["precio_m2_mediano"], color=color, s=22)
-        eje.set_title(f"{fila.escenario}: {fila.indicador}\nr = {fila.pearson_con_precio_m2_mediano:.2f}",
-                      fontsize=8)
+        titulo, unidad, factor = ETIQUETAS_CONTEXTO[fila.indicador]
+        x = contexto[fila.indicador] * factor
+        eje.scatter(x, contexto["precio_m2_mediano"], color=AZUL if fila.escenario == "D2" else GRIS, s=22)
+        eje.set_title(f"{titulo}\nPearson {numero_es(fila.pearson_con_precio_m2_mediano, 2)} · "
+                      f"Spearman {numero_es(fila.spearman_con_precio_m2_mediano, 2)}", fontsize=9)
+        eje.set_xlabel(unidad, fontsize=8)
+        eje.xaxis.set_major_formatter(formato_eje_es)
+        eje.yaxis.set_major_formatter(formato_eje_es)
         eje.tick_params(labelsize=7)
+        if fila.indicador == "detenidos_por_1000_hab":
+            centro = contexto["DISTRITO"] == "Centro"
+            eje.annotate("Centro", (x[centro].iloc[0], contexto.loc[centro, "precio_m2_mediano"].iloc[0]),
+                         xytext=(-8, -12), textcoords="offset points", ha="right", fontsize=8)
     for eje in ejes[:, 0]:
-        eje.set_ylabel("€ por m², mediana del distrito", fontsize=8)
+        eje.set_ylabel("€ por m² (mediana del distrito)", fontsize=8)
     fig.suptitle("Indicadores de contexto y precio por m² de los 21 distritos", fontsize=11)
-    guardar_figura(fig, "04_contexto_precio_distritos.png")
+    fig.legend(handles=[plt.Line2D([], [], marker="o", linestyle="", color=AZUL, label="D2: contexto socioeconómico"),
+                        plt.Line2D([], [], marker="o", linestyle="", color=GRIS, label="D3: entorno urbano")],
+               loc="outside lower center", ncol=2, fontsize=9, frameon=False)
+    fig.savefig(DIR_FIGURAS / "04_contexto_precio_distritos.png", dpi=200)
+    plt.close(fig)
     return contexto, correlaciones
 
 
