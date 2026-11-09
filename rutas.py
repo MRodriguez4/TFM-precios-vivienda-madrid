@@ -9,7 +9,8 @@ Rutas de los datos del proyecto, en un único sitio.
     │   ├── idealista18/     anuncios, barrios y puntos de interés en CSV
     │   ├── distritos/       indicadores de distrito de 2018 y su diccionario
     │   ├── calidad/         perfil de las variables y cifras del capítulo de datos
-    │   └── exploratorio/    análisis exploratorio del conjunto final y sus figuras
+    │   ├── exploratorio/    análisis exploratorio del conjunto final y sus figuras
+    │   └── modelizacion/    métricas, mejoras, hiperparámetros y predicciones de los modelos
     └── final/           conjunto de estudio, definición de los escenarios y pliegues
 """
 
@@ -26,6 +27,7 @@ DIR_IDEALISTA = DIR_PROCESADOS / "idealista18"
 DIR_DISTRITOS = DIR_PROCESADOS / "distritos"
 DIR_CALIDAD = DIR_PROCESADOS / "calidad"
 DIR_EXPLORATORIO = DIR_PROCESADOS / "exploratorio"
+DIR_MODELIZACION = DIR_PROCESADOS / "modelizacion"
 
 DIR_FINAL = DIR_DATOS / "final"
 
