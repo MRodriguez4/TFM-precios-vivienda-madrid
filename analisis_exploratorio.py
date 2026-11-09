@@ -15,8 +15,11 @@ Análisis:
     4. Relación de los 8 indicadores de contexto (D2 y D3) con el precio de su distrito.
     5. Dependencia espacial del precio: índice de Moran del precio por m² entre zonas vecinas.
     6. Tamaño de los pliegues de la validación espacial por distritos.
+    7. Precio de las viviendas según conste o no su planta y su posición exterior o interior
+       (justifica el indicador de dato ausente de la modelización).
+    8. Atípicos del precio en euros y en logaritmo, y las viviendas más baratas y más caras.
 
-Requiere haber ejecutado antes construir_conjunto.py.
+Requiere haber ejecutado antes construir_conjunto.py, que también genera los pliegues.
 
 Salida (en datos/procesados/exploratorio/):
     - 01_precio.csv: estadísticos del precio, de su logaritmo y del precio por m².
@@ -27,6 +30,9 @@ Salida (en datos/procesados/exploratorio/):
     - 04_correlaciones_contexto.csv: correlación de cada indicador con el precio del distrito (21 distritos).
     - 05_dependencia_espacial.csv: índice de Moran del precio por m² entre zonas vecinas.
     - 06_pliegues_espaciales.csv: distritos y viviendas de cada pliegue de la validación espacial.
+    - 07_ausentes_precio.csv: viviendas sin dato de planta o de posición y su precio frente al resto.
+    - 08_atipicos_precio.csv: atípicos del precio en euros y en logaritmo.
+    - 08_precios_extremos.csv: las cinco viviendas más baratas y las cinco más caras.
     - figuras/: las figuras del apartado.
 
 Uso:
@@ -48,7 +54,7 @@ from matplotlib.patches import Polygon as ParcheMatplotlib
 from shapely import wkt
 
 from idealista18_madrid import a_metros
-from rutas import CONJUNTO_CSV, DIR_EXPLORATORIO, DIR_IDEALISTA, ESCENARIOS_JSON
+from rutas import CONJUNTO_CSV, DIR_EXPLORATORIO, DIR_IDEALISTA, ESCENARIOS_JSON, PLIEGUES_CSV
 
 DIR_FIGURAS = DIR_EXPLORATORIO / "figuras"
 GRIS = "#7f7f7f"
@@ -57,7 +63,6 @@ SEMILLA = 2018
 # no cubren la ciudad sin huecos, así que exigir que se toquen dejaría vecinas sin conectar
 DISTANCIA_VECINAS_M = 100
 PERMUTACIONES_MORAN = 999
-N_PLIEGUES = 5
 AZUL = "#1f5fa8"
 
 # Nombre, unidad del eje y factor de escala de cada indicador en la figura de contexto
@@ -333,25 +338,61 @@ def analizar_dependencia_espacial(conjunto):
 
 # 6. Pliegues de la validación espacial
 
-def analizar_pliegues(distritos):
-    """Reparto de los distritos en N_PLIEGUES grupos de tamaño parecido.
+def analizar_pliegues(conjunto):
+    """Distritos y viviendas de cada pliegue de la validación espacial (los de construir_conjunto.py)."""
+    pliegues = pd.read_csv(PLIEGUES_CSV, dtype={"ASSETID": str, "COD_DISTRITO": str})
+    datos = conjunto[["ASSETID", "DISTRITO"]].merge(pliegues[["ASSETID", "pliegue_espacial"]], on="ASSETID",
+                                                     validate="one_to_one")
+    # Distritos de cada pliegue, de mayor a menor número de viviendas
+    por_distrito = datos.groupby(["pliegue_espacial", "DISTRITO"]).size().rename("viviendas").reset_index()
+    por_distrito = por_distrito.sort_values(["pliegue_espacial", "viviendas"], ascending=[True, False])
+    tabla = por_distrito.groupby("pliegue_espacial").agg(
+        distritos=("DISTRITO", "size"), viviendas=("viviendas", "sum"), nombres=("DISTRITO", ", ".join))
+    tabla["pct_viviendas"] = (100 * tabla["viviendas"] / len(datos)).round(1)
+    return tabla.reset_index().rename(columns={"pliegue_espacial": "pliegue"})[
+        ["pliegue", "distritos", "viviendas", "pct_viviendas", "nombres"]]
 
-    Sigue el criterio de GroupKFold de scikit-learn: los distritos, de mayor a menor número de
-    viviendas, se asignan uno a uno al pliegue que tiene menos viviendas en ese momento.
+
+# 7. Precio según conste o no la planta y la posición
+
+def analizar_ausentes(conjunto, objetivo):
+    """Precio de las viviendas sin dato de planta o de posición frente a las que sí lo tienen.
+
+    Si las viviendas sin dato tienen precios distintos, que falte el dato es informativo: por eso
+    la modelización añade un indicador de dato ausente además de imputar el valor.
     """
-    viviendas = [0] * N_PLIEGUES
-    asignacion = {}
-    for fila in distritos.sort_values("viviendas", ascending=False).itertuples():
-        pliegue = int(np.argmin(viviendas))
-        viviendas[pliegue] += fila.viviendas
-        asignacion.setdefault(pliegue, []).append(fila.DISTRITO)
+    filas = []
+    for col, nombre in [("FLOORCLEAN", "planta"), ("FLATLOCATIONID", "posición exterior o interior")]:
+        for consta, grupo in [("sí", conjunto[conjunto[col].notna()]), ("no", conjunto[conjunto[col].isna()])]:
+            filas.append({"variable": nombre, "consta_el_dato": consta, "viviendas": len(grupo),
+                          "pct_viviendas": round(100 * len(grupo) / len(conjunto), 1),
+                          "precio_mediano": grupo[objetivo].median(),
+                          "precio_m2_mediano": round(grupo["PRECIO_M2"].median()),
+                          "superficie_mediana": grupo["CONSTRUCTEDAREA"].median()})
+    return pd.DataFrame(filas)
 
-    total = sum(viviendas)
-    return pd.DataFrame([
-        {"pliegue": k + 1, "distritos": len(asignacion[k]), "viviendas": viviendas[k],
-         "pct_viviendas": round(100 * viviendas[k] / total, 1), "nombres": ", ".join(asignacion[k])}
-        for k in range(N_PLIEGUES)
-    ])
+
+# 8. Atípicos del precio
+
+def analizar_atipicos(conjunto, objetivo):
+    """Atípicos del precio según el rango intercuartílico, en euros y en logaritmo.
+
+    En logaritmo, que es la escala en la que se entrenan los modelos, los atípicos casi
+    desaparecen: por eso se conservan todas las viviendas.
+    """
+    filas = []
+    for escala, valores in [("euros", conjunto[objetivo]), ("logaritmo", conjunto["LOG_PRECIO"])]:
+        q1, q3 = valores.quantile([0.25, 0.75])
+        riq = q3 - q1
+        for veces in (1.5, 3):
+            fuera = (valores < q1 - veces * riq) | (valores > q3 + veces * riq)
+            filas.append({"escala": escala, "criterio": f"más de {veces} rangos intercuartílicos",
+                          "atipicos": int(fuera.sum()), "pct_viviendas": round(100 * fuera.mean(), 2)})
+    columnas = [objetivo, "CONSTRUCTEDAREA", "ROOMNUMBER", "BATHNUMBER", "PRECIO_M2", "DISTRITO"]
+    extremos = pd.concat([conjunto.nsmallest(5, objetivo)[columnas].assign(grupo="más baratas"),
+                          conjunto.nlargest(5, objetivo)[columnas].assign(grupo="más caras")])
+    extremos["PRECIO_M2"] = extremos["PRECIO_M2"].round()
+    return pd.DataFrame(filas), extremos[["grupo"] + columnas]
 
 
 def main():
@@ -364,12 +405,15 @@ def main():
     vivienda = analizar_vivienda(conjunto, escenarios, objetivo)
     contexto, correlaciones = analizar_contexto(conjunto, escenarios, distritos)
     dependencia = analizar_dependencia_espacial(conjunto)
-    pliegues = analizar_pliegues(distritos)
+    pliegues = analizar_pliegues(conjunto)
+    ausentes = analizar_ausentes(conjunto, objetivo)
+    atipicos, extremos = analizar_atipicos(conjunto, objetivo)
 
     salidas = {"01_precio": precio, "02_distritos": distritos, "02_varianza_entre_grupos": varianza,
                "03_correlaciones_vivienda": vivienda, "04_contexto_distritos": contexto,
                "04_correlaciones_contexto": correlaciones, "05_dependencia_espacial": dependencia,
-               "06_pliegues_espaciales": pliegues}
+               "06_pliegues_espaciales": pliegues, "07_ausentes_precio": ausentes,
+               "08_atipicos_precio": atipicos, "08_precios_extremos": extremos}
     for nombre, tabla in salidas.items():
         tabla.to_csv(DIR_EXPLORATORIO / f"{nombre}.csv", index=False, encoding="utf-8-sig")
 
@@ -387,8 +431,13 @@ def main():
     print(correlaciones.to_string(index=False))
     print("\nDependencia espacial del precio:")
     print(dependencia.to_string(index=False))
-    print(f"\nPliegues de la validación espacial ({N_PLIEGUES} grupos de distritos):")
+    print(f"\nPliegues de la validación espacial ({len(pliegues)} grupos de distritos):")
     print(pliegues.to_string(index=False))
+    print("\nPrecio según conste o no el dato:")
+    print(ausentes.to_string(index=False))
+    print("\nAtípicos del precio:")
+    print(atipicos.to_string(index=False))
+    print(extremos.to_string(index=False))
     print(f"\nFicheros guardados en {DIR_EXPLORATORIO}")
 
 

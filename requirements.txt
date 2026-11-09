@@ -6,3 +6,6 @@ matplotlib
 openpyxl
 xlrd
 tabulate
+scikit-learn
+xgboost
+shap

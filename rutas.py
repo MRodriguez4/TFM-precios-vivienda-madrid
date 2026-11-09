@@ -10,7 +10,7 @@ Rutas de los datos del proyecto, en un único sitio.
     │   ├── distritos/       indicadores de distrito de 2018 y su diccionario
     │   ├── calidad/         perfil de las variables y cifras del capítulo de datos
     │   └── exploratorio/    análisis exploratorio del conjunto final y sus figuras
-    └── final/           conjunto de estudio y definición de los escenarios
+    └── final/           conjunto de estudio, definición de los escenarios y pliegues
 """
 
 from pathlib import Path
@@ -35,3 +35,4 @@ DISTRITOS_CSV = DIR_DISTRITOS / "distritos_2018.csv"
 CONJUNTO_CSV = DIR_FINAL / "conjunto_estudio.csv"
 ESCENARIOS_JSON = DIR_FINAL / "escenarios.json"
 SELECCION_CSV = DIR_FINAL / "seleccion_indicadores.csv"
+PLIEGUES_CSV = DIR_FINAL / "pliegues.csv"

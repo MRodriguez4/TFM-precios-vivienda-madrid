@@ -18,6 +18,7 @@ Salida (en datos/final/):
     - escenarios.json: variable objetivo, columna que agrupa la validación espacial y lista
       de variables explicativas de cada escenario.
     - seleccion_indicadores.csv: decisión sobre cada indicador evaluado para D2 y D3, con su motivo.
+    - pliegues.csv: pliegue de cada vivienda en la validación aleatoria y en la espacial.
 
 Uso:
     python construir_conjunto.py
@@ -29,13 +30,17 @@ import numpy as np
 import pandas as pd
 
 from distritos_2018 import DIMENSIONES
-from rutas import CONJUNTO_CSV, DIR_FINAL, DISTRITOS_CSV, ESCENARIOS_JSON, SELECCION_CSV, VENTAS_CSV
+from rutas import (CONJUNTO_CSV, DIR_FINAL, DISTRITOS_CSV, ESCENARIOS_JSON, PLIEGUES_CSV, SELECCION_CSV,
+                   VENTAS_CSV)
 
 OBJETIVO = "PRICE"
 # La validación espacial reserva distritos completos para la evaluación. El distrito se usa
 # solo para repartir los datos: no es una variable explicativa de ningún escenario.
 GRUPO_VALIDACION_ESPACIAL = "COD_DISTRITO"
-SEMILLA = 2018  # para elegir al azar entre filas empatadas del mismo inmueble
+SEMILLA = 2018  # para elegir al azar entre filas empatadas del mismo inmueble y repartir los pliegues
+# Pliegues de la validación cruzada, iguales para todos los escenarios y modelos: así cada
+# comparación entre escenarios se hace con exactamente las mismas viviendas
+N_PLIEGUES = 5
 
 # Identificadores y variables de referencia: se guardan en el conjunto pero no
 # entran en ningún escenario como variables explicativas.
@@ -226,10 +231,37 @@ def definir_escenarios(seleccion):
     return {"D0": d0, "D1": d1, "D2": d2, "D3": d3}
 
 
+def asignar_pliegues(conjunto):
+    """Pliegue de cada vivienda en la validación aleatoria y en la espacial.
+
+    Aleatoria: las viviendas se ordenan al azar (semilla fija) y se reparten por turnos, de
+    modo que los pliegues tienen el mismo tamaño. Espacial: sigue el criterio de GroupKFold de
+    scikit-learn; los distritos, de mayor a menor número de viviendas, se asignan uno a uno al
+    pliegue que tiene menos viviendas en ese momento, así que cada distrito queda entero en un
+    pliegue y los pliegues tienen tamaños parecidos.
+    """
+    orden = np.random.default_rng(SEMILLA).permutation(len(conjunto))
+    aleatorio = np.empty(len(conjunto), dtype=int)
+    aleatorio[orden] = np.arange(len(conjunto)) % N_PLIEGUES + 1
+
+    tamanos = conjunto[GRUPO_VALIDACION_ESPACIAL].value_counts()
+    viviendas = [0] * N_PLIEGUES
+    pliegue_distrito = {}
+    for distrito, n in tamanos.items():
+        k = int(np.argmin(viviendas))
+        viviendas[k] += n
+        pliegue_distrito[distrito] = k + 1
+
+    return pd.DataFrame({"ASSETID": conjunto["ASSETID"], GRUPO_VALIDACION_ESPACIAL: conjunto[GRUPO_VALIDACION_ESPACIAL],
+                         "pliegue_aleatorio": aleatorio,
+                         "pliegue_espacial": conjunto[GRUPO_VALIDACION_ESPACIAL].map(pliegue_distrito)})
+
+
 def main():
     conjunto, distritos, pasos = cargar_y_depurar()
     seleccion, decisiones = seleccionar_indicadores(distritos)
     escenarios = definir_escenarios(seleccion)
+    pliegues = asignar_pliegues(conjunto)
 
     columnas = REFERENCIA + [OBJETIVO] + escenarios["D3"]
     faltan = set(columnas) - set(conjunto.columns)
@@ -239,6 +271,7 @@ def main():
     DIR_FINAL.mkdir(parents=True, exist_ok=True)
     conjunto[columnas].to_csv(CONJUNTO_CSV, index=False)
     decisiones.to_csv(SELECCION_CSV, index=False, encoding="utf-8-sig")
+    pliegues.to_csv(PLIEGUES_CSV, index=False)
     ESCENARIOS_JSON.write_text(
         json.dumps({"objetivo": OBJETIVO, "grupo_validacion_espacial": GRUPO_VALIDACION_ESPACIAL,
                     "escenarios": escenarios}, indent=2, ensure_ascii=False),
@@ -270,6 +303,9 @@ def main():
     print("Valores ausentes:")
     for col, k in final.isna().sum()[lambda x: x > 0].items():
         print(f"  {col}: {k:,} ({100 * k / len(final):.2f} %)")
+    for tipo in ["aleatorio", "espacial"]:
+        tamanos = pliegues[f"pliegue_{tipo}"].value_counts().sort_index()
+        print(f"Viviendas por pliegue ({tipo}): " + ", ".join(f"{k}: {n:,}" for k, n in tamanos.items()))
     print(f"\nFicheros guardados en {DIR_FINAL}")
 
 
