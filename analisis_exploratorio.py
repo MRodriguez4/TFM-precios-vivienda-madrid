@@ -15,9 +15,10 @@ Análisis:
     4. Relación de los 8 indicadores de contexto (D2 y D3) con el precio de su distrito.
     5. Dependencia espacial del precio: índice de Moran del precio por m² entre zonas vecinas.
     6. Tamaño de los pliegues de la validación espacial por distritos.
-    7. Precio de las viviendas según conste o no su planta y su posición exterior o interior
-       (justifica el indicador de dato ausente de la modelización).
-    8. Atípicos del precio en euros y en logaritmo, y las viviendas más baratas y más caras.
+    7. Precio de las viviendas según conste o no su planta, su posición exterior o interior y
+       su calidad catastral (justifica el indicador de dato ausente de la modelización).
+    8. Atípicos del precio en euros y en logaritmo, las viviendas más baratas y más caras, y
+       las viviendas con más habitaciones.
 
 Requiere haber ejecutado antes construir_conjunto.py, que también genera los pliegues.
 
@@ -30,9 +31,11 @@ Salida (en datos/procesados/exploratorio/):
     - 04_correlaciones_contexto.csv: correlación de cada indicador con el precio del distrito (21 distritos).
     - 05_dependencia_espacial.csv: índice de Moran del precio por m² entre zonas vecinas.
     - 06_pliegues_espaciales.csv: distritos y viviendas de cada pliegue de la validación espacial.
-    - 07_ausentes_precio.csv: viviendas sin dato de planta o de posición y su precio frente al resto.
+    - 07_ausentes_precio.csv: viviendas sin dato de planta, posición o calidad catastral y su
+      precio frente al resto.
     - 08_atipicos_precio.csv: atípicos del precio en euros y en logaritmo.
     - 08_precios_extremos.csv: las cinco viviendas más baratas y las cinco más caras.
+    - 08_habitaciones_extremas.csv: las cinco viviendas con más habitaciones.
     - figuras/: las figuras del apartado.
 
 Uso:
@@ -356,13 +359,15 @@ def analizar_pliegues(conjunto):
 # 7. Precio según conste o no la planta y la posición
 
 def analizar_ausentes(conjunto, objetivo):
-    """Precio de las viviendas sin dato de planta o de posición frente a las que sí lo tienen.
+    """Precio de las viviendas sin dato de planta, posición o calidad catastral frente al resto.
 
     Si las viviendas sin dato tienen precios distintos, que falte el dato es informativo: por eso
-    la modelización añade un indicador de dato ausente además de imputar el valor.
+    la modelización añade un indicador de dato ausente además de imputar el valor. La calidad
+    catastral solo falta en una vivienda, así que no lleva indicador.
     """
     filas = []
-    for col, nombre in [("FLOORCLEAN", "planta"), ("FLATLOCATIONID", "posición exterior o interior")]:
+    for col, nombre in [("FLOORCLEAN", "planta"), ("FLATLOCATIONID", "posición exterior o interior"),
+                        ("CADASTRALQUALITYID", "calidad catastral de la construcción")]:
         for consta, grupo in [("sí", conjunto[conjunto[col].notna()]), ("no", conjunto[conjunto[col].isna()])]:
             filas.append({"variable": nombre, "consta_el_dato": consta, "viviendas": len(grupo),
                           "pct_viviendas": round(100 * len(grupo) / len(conjunto), 1),
@@ -378,7 +383,8 @@ def analizar_atipicos(conjunto, objetivo):
     """Atípicos del precio según el rango intercuartílico, en euros y en logaritmo.
 
     En logaritmo, que es la escala en la que se entrenan los modelos, los atípicos casi
-    desaparecen: por eso se conservan todas las viviendas.
+    desaparecen: por eso se conservan todas las viviendas. También devuelve las viviendas con
+    más habitaciones, donde hay valores improbables que se conservan porque no pueden comprobarse.
     """
     filas = []
     for escala, valores in [("euros", conjunto[objetivo]), ("logaritmo", conjunto["LOG_PRECIO"])]:
@@ -392,7 +398,8 @@ def analizar_atipicos(conjunto, objetivo):
     extremos = pd.concat([conjunto.nsmallest(5, objetivo)[columnas].assign(grupo="más baratas"),
                           conjunto.nlargest(5, objetivo)[columnas].assign(grupo="más caras")])
     extremos["PRECIO_M2"] = extremos["PRECIO_M2"].round()
-    return pd.DataFrame(filas), extremos[["grupo"] + columnas]
+    habitaciones = conjunto.nlargest(5, "ROOMNUMBER")[columnas].round({"PRECIO_M2": 0})
+    return pd.DataFrame(filas), extremos[["grupo"] + columnas], habitaciones
 
 
 def main():
@@ -407,13 +414,14 @@ def main():
     dependencia = analizar_dependencia_espacial(conjunto)
     pliegues = analizar_pliegues(conjunto)
     ausentes = analizar_ausentes(conjunto, objetivo)
-    atipicos, extremos = analizar_atipicos(conjunto, objetivo)
+    atipicos, extremos, habitaciones = analizar_atipicos(conjunto, objetivo)
 
     salidas = {"01_precio": precio, "02_distritos": distritos, "02_varianza_entre_grupos": varianza,
                "03_correlaciones_vivienda": vivienda, "04_contexto_distritos": contexto,
                "04_correlaciones_contexto": correlaciones, "05_dependencia_espacial": dependencia,
                "06_pliegues_espaciales": pliegues, "07_ausentes_precio": ausentes,
-               "08_atipicos_precio": atipicos, "08_precios_extremos": extremos}
+               "08_atipicos_precio": atipicos, "08_precios_extremos": extremos,
+               "08_habitaciones_extremas": habitaciones}
     for nombre, tabla in salidas.items():
         tabla.to_csv(DIR_EXPLORATORIO / f"{nombre}.csv", index=False, encoding="utf-8-sig")
 
@@ -438,6 +446,8 @@ def main():
     print("\nAtípicos del precio:")
     print(atipicos.to_string(index=False))
     print(extremos.to_string(index=False))
+    print("\nViviendas con más habitaciones:")
+    print(habitaciones.to_string(index=False))
     print(f"\nFicheros guardados en {DIR_EXPLORATORIO}")
 
 
