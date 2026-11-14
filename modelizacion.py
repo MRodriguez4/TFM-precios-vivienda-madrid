@@ -33,7 +33,8 @@ Salida (en datos/procesados/modelizacion/):
       euros y en porcentaje, y número de pliegues en que mejora.
     - hiperparametros.csv: hiperparámetros elegidos en cada pliegue.
     - predicciones.csv: predicción de cada vivienda cuando estaba en el pliegue de evaluación.
-    - versiones.csv: versiones de Python y de las librerías utilizadas.
+    - versiones.csv: versiones de Python y de las librerías utilizadas en todo el trabajo, sistema
+      operativo, procesador, hilos de ejecución y memoria del equipo.
     - prueba_tiempos.csv (solo con --prueba): tiempo de un pliegue de D3 por modelo y validación.
 
 Uso:
@@ -43,7 +44,9 @@ Uso:
 """
 
 import argparse
+import importlib.metadata
 import json
+import os
 import platform
 import shutil
 import time
@@ -283,11 +286,44 @@ def unir_predicciones():
     return tabla
 
 
+def procesador_y_memoria():
+    """Nombre comercial del procesador y memoria RAM en GB (None si no se puede obtener)."""
+    procesador, memoria = platform.processor() or None, None
+    if platform.system() == "Windows":
+        import ctypes
+        import winreg
+
+        clave = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        procesador = winreg.QueryValueEx(clave, "ProcessorNameString")[0].strip()
+
+        class EstadoMemoria(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                (campo, ctypes.c_ulonglong) for campo in ["ullTotalPhys", "ullAvailPhys", "ullTotalPageFile",
+                                                          "ullAvailPageFile", "ullTotalVirtual",
+                                                          "ullAvailVirtual", "ullAvailExtendedVirtual"]]
+
+        estado = EstadoMemoria(dwLength=ctypes.sizeof(EstadoMemoria))
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(estado))
+        memoria = estado.ullTotalPhys
+    elif platform.system() == "Linux":
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            procesador = next((l.split(":", 1)[1].strip() for l in f if l.startswith("model name")), procesador)
+        memoria = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return procesador, None if memoria is None else round(memoria / 1024 ** 3, 1)
+
+
 def versiones():
+    """Versiones del software utilizado en todo el trabajo y equipo en que se ejecuta la modelización."""
+    procesador, memoria = procesador_y_memoria()
     return pd.DataFrame([("Python", platform.python_version()), ("pandas", pd.__version__),
-                         ("NumPy", np.__version__), ("scikit-learn", sklearn.__version__),
-                         ("XGBoost", xgboost.__version__), ("SHAP", shap.__version__)],
-                        columns=["software", "version"])
+                         ("NumPy", np.__version__), ("rdata", importlib.metadata.version("rdata")),
+                         ("Shapely", importlib.metadata.version("shapely")),
+                         ("Matplotlib", importlib.metadata.version("matplotlib")),
+                         ("scikit-learn", sklearn.__version__), ("XGBoost", xgboost.__version__),
+                         ("SHAP", shap.__version__), ("Sistema operativo", platform.platform()),
+                         ("Procesador", procesador), ("Hilos de ejecución", os.cpu_count()),
+                         ("Memoria RAM (GB)", memoria)],
+                        columns=["elemento", "valor"])
 
 
 def prueba_tiempos(conjunto, escenarios, objetivo, muestra):

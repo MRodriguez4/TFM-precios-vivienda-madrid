@@ -84,7 +84,7 @@ Los scripts se ejecutan en este orden:
 | `datos/procesados/calidad/perfil_variables.csv` | Resultados de las validaciones para cada una de las 167 variables |
 | `datos/procesados/calidad/calidad_datos.xlsx` | Todas las tablas de validación, una hoja por validación |
 | `datos/procesados/exploratorio/` | Tablas y figuras del análisis exploratorio del conjunto final |
-| `datos/procesados/modelizacion/` | Métricas por pliegue, resumen, mejoras entre escenarios, hiperparámetros elegidos, predicciones y versiones de las librerías |
+| `datos/procesados/modelizacion/` | Métricas por pliegue, resumen, mejoras entre escenarios, hiperparámetros elegidos, predicciones, versiones de las librerías y equipo de cálculo |
 | `datos/procesados/idealista18/madrid_sale_2018.csv` | Los 94.815 anuncios originales con su barrio y distrito |
 
 Para cargar un escenario desde Python:
