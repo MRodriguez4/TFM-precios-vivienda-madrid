@@ -28,6 +28,8 @@ Todos los indicadores se refieren a 2018, el año de los anuncios. La población
 ├── calidad_datos.py          3. Valida la calidad de los datos integrados, antes de depurar
 ├── construir_conjunto.py     4. Integra, depura y define los escenarios D0-D3
 ├── analisis_exploratorio.py  5. Análisis exploratorio del conjunto final, con sus figuras
+├── modelizacion.py           6. Entrena y evalúa los modelos en cada escenario
+├── interpretabilidad.py      7. Contribución de cada variable y bloque en D3 (SHAP)
 ├── rutas.py                  Rutas de la carpeta datos/
 ├── requirements.txt
 └── datos/
@@ -62,6 +64,7 @@ Los scripts se ejecutan en este orden:
 .venv\Scripts\python construir_conjunto.py
 .venv\Scripts\python analisis_exploratorio.py
 .venv\Scripts\python modelizacion.py
+.venv\Scripts\python interpretabilidad.py
 ```
 
 1. **`idealista18_madrid.py`** descarga los ficheros `.rda` de idealista18 (si no están ya en `datos/originales/idealista18/`) y los convierte a CSV. Asigna a cada anuncio la zona de idealista y el distrito en el que se encuentra, a partir de sus coordenadas; los que no caen dentro de ninguna zona se asignan a la más cercana si está a menos de 500 m. Opciones: `--forzar-descarga` y `--sin-barrios`.
@@ -70,6 +73,7 @@ Los scripts se ejecutan en este orden:
 4. **`construir_conjunto.py`** une los anuncios con los indicadores de su distrito y aplica las decisiones de depuración tomadas a partir de la validación: elimina el anuncio sin distrito y los estudios con dos o más dormitorios, y conserva de cada inmueble la fila con el precio más cercano a su mediana (los empates se deciden al azar con semilla fija). Después representa cada dimensión conceptual seleccionada del contexto (cuatro por bloque, respaldadas en el estado del arte del TFM: nivel económico, nivel educativo, población extranjera y estructura por edad; densidad urbana, zonas verdes, seguridad y comercio de proximidad) con un solo indicador, sin usar el precio: el primero de sus representantes que no sea casi constante, no mida solo el tamaño del distrito y no tenga una correlación de 0,9 o más con otro ya elegido. Las 21 dimensiones y la asignación de los 119 indicadores están en `distritos_2018.py`. Guarda el conjunto de estudio, la lista de variables de cada escenario y los pliegues de la validación cruzada: cinco aleatorios (semilla fija) y cinco espaciales formados por distritos completos, iguales para todos los escenarios y modelos.
 5. **`analisis_exploratorio.py`** describe el conjunto final una vez definidos los escenarios: la distribución del precio, el precio por distrito y por zona (con la parte de su varianza que se da entre distritos), la relación del precio con las variables de D0 y D1, la de los 8 indicadores de contexto con el precio de su distrito, la dependencia espacial del precio (índice de Moran entre zonas vecinas), el reparto de los distritos en los cinco pliegues de la validación espacial, el precio de las viviendas según conste o no su planta, su posición y su calidad catastral, los atípicos del precio en euros y en logaritmo, y las viviendas con más habitaciones. Usa el precio, pero no modifica los escenarios: solo apoya decisiones de modelización que afectan por igual a todos ellos.
 6. **`modelizacion.py`** entrena Ridge, Random Forest y XGBoost en cada escenario con el logaritmo del precio y los evalúa con las validaciones aleatoria y espacial, usando los pliegues de `pliegues.csv`. La preparación (imputación con indicador de dato ausente, superficie en logaritmo, trimestre en one-hot y, en Ridge, estandarización) se ajusta dentro de cada pliegue. Los hiperparámetros se eligen con validación cruzada anidada: tres pliegues internos del mismo tipo que la validación, una rejilla de 17 valores para Ridge y 15 combinaciones al azar para cada modelo de árboles. Calcula MAE, RMSE y R² en euros y la mejora de cada escenario pliegue a pliegue. Con `--prueba` ejecuta un solo pliegue de D3 para medir tiempos; el experimento completo tarda varias horas y, si se interrumpe, continúa donde se quedó.
+7. **`interpretabilidad.py`** explica con SHAP las predicciones de los modelos de D3. Para cada modelo, validación y pliegue vuelve a entrenar el modelo con los hiperparámetros elegidos en ese pliegue, comprueba que reproduce el MAE de `metricas_pliegues.csv` y calcula los valores SHAP (en logaritmo del precio) de las viviendas del pliegue de evaluación: todas en Ridge y XGBoost, y una muestra de 100 por pliegue en Random Forest, cuyo cálculo es mucho más lento. Resume la importancia de cada variable y de cada bloque de información con la media y la desviación entre pliegues. Con `--modelos` se ejecutan solo los modelos indicados y con `--prueba`, un pliegue con 20 viviendas; si se interrumpe, continúa donde se quedó.
 
 ## Resultados
 
@@ -85,6 +89,7 @@ Los scripts se ejecutan en este orden:
 | `datos/procesados/calidad/calidad_datos.xlsx` | Todas las tablas de validación, una hoja por validación |
 | `datos/procesados/exploratorio/` | Tablas y figuras del análisis exploratorio del conjunto final |
 | `datos/procesados/modelizacion/` | Métricas por pliegue, resumen, mejoras entre escenarios, hiperparámetros elegidos, predicciones, versiones de las librerías y equipo de cálculo |
+| `datos/procesados/interpretabilidad/` | Comprobación de los modelos reproducidos, importancia SHAP de cada variable y bloque, valores SHAP de cada vivienda y figuras |
 | `datos/procesados/idealista18/madrid_sale_2018.csv` | Los 94.815 anuncios originales con su barrio y distrito |
 
 Para cargar un escenario desde Python:

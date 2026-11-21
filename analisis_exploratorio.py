@@ -89,7 +89,7 @@ def numero_es(valor, decimales=0):
 
 def formato_eje_es(valor, _):
     """Marcas de eje en notación española, con los decimales justos."""
-    decimales = next((d for d in range(3) if abs(valor * 10 ** d - round(valor * 10 ** d)) < 1e-9), 2)
+    decimales = next((d for d in range(5) if abs(valor * 10 ** d - round(valor * 10 ** d)) < 1e-9), 4)
     return numero_es(valor, decimales)
 
 
