@@ -33,6 +33,8 @@ Salida (en datos/procesados/modelizacion/):
       euros y en porcentaje, y número de pliegues en que mejora.
     - hiperparametros.csv: hiperparámetros elegidos en cada pliegue.
     - predicciones.csv: predicción de cada vivienda cuando estaba en el pliegue de evaluación.
+    - figuras/02_mae_escenarios.png: MAE de cada pliegue y su media por escenario y modelo, con
+      validación aleatoria y espacial.
     - versiones.csv: versiones de Python y de las librerías utilizadas en todo el trabajo, sistema
       operativo, procesador, hilos de ejecución y memoria del equipo.
     - prueba_tiempos.csv (solo con --prueba): tiempo de un pliegue de D3 por modelo y validación.
@@ -51,6 +53,10 @@ import platform
 import shutil
 import time
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
@@ -66,6 +72,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 from xgboost import XGBRegressor
 
+from analisis_exploratorio import AZUL, GRIS, formato_eje_es
 from rutas import CONJUNTO_CSV, DIR_MODELIZACION, ESCENARIOS_JSON, PLIEGUES_CSV
 
 SEMILLA = 2018
@@ -125,6 +132,13 @@ COMPARACIONES = [("D0", "D1"), ("D1", "D2"), ("D2", "D3"), ("D0", "D3")]
 
 METRICAS_CSV = DIR_MODELIZACION / "metricas_pliegues.csv"
 DIR_PREDICCIONES_PARCIALES = DIR_MODELIZACION / "predicciones_parciales"
+DIR_FIGURAS = DIR_MODELIZACION / "figuras"
+
+# Nombre, color y desplazamiento horizontal de cada modelo en la figura del MAE
+ESTILO_MODELOS = {"ridge": ("Ridge", GRIS, -0.1), "random_forest": ("Random Forest", AZUL, 0.0),
+                  "xgboost": ("XGBoost", "#e08214", 0.1)}
+ETIQUETAS_ESCENARIOS = {"D0": "D0\nVivienda", "D1": "D1\n+ Localización", "D2": "D2\n+ Socioeconómico",
+                        "D3": "D3\n+ Entorno urbano"}
 
 
 def cargar():
@@ -251,7 +265,9 @@ def calcular_mejoras(metricas):
     """Mejora de un escenario sobre otro, pliegue a pliegue, en euros, en porcentaje y en R².
 
     Una mejora positiva significa menor error (MAE, RMSE) o mayor R² en el escenario con más
-    información. Se cuenta en cuántos pliegues mejora el MAE.
+    información. La mejora en porcentaje se calcula sobre el error medio del escenario base, para
+    que tenga siempre el mismo signo que la mejora en euros. Se cuenta en cuántos pliegues mejora
+    el MAE.
     """
     tabla = metricas.pivot_table(index=["validacion", "modelo", "pliegue"], columns="escenario",
                                  values=["mae", "rmse", "r2"])
@@ -262,7 +278,7 @@ def calcular_mejoras(metricas):
             for m in ["mae", "rmse"]:
                 diferencia = grupo[(m, base)] - grupo[(m, nuevo)]
                 fila[f"mejora_{m}_euros"] = diferencia.mean()
-                fila[f"mejora_{m}_pct"] = (100 * diferencia / grupo[(m, base)]).mean()
+                fila[f"mejora_{m}_pct"] = 100 * diferencia.mean() / grupo[(m, base)].mean()
             fila["mejora_r2"] = (grupo[("r2", nuevo)] - grupo[("r2", base)]).mean()
             fila["pliegues_con_mejora_mae"] = int((grupo[("mae", base)] > grupo[("mae", nuevo)]).sum())
             fila["pliegues"] = len(grupo)
@@ -284,6 +300,33 @@ def unir_predicciones():
         p = p.rename(columns={"prediccion": parcial.stem})
         tabla = p if tabla is None else tabla.merge(p, on="ASSETID", how="outer", validate="one_to_one")
     return tabla
+
+
+def figura_mae(metricas):
+    """MAE de cada pliegue (puntos) y su media (línea) por escenario y modelo, en las dos validaciones."""
+    escenarios = list(ETIQUETAS_ESCENARIOS)
+    fig, ejes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
+    for eje, validacion in zip(ejes, VALIDACIONES):
+        for modelo, (nombre, color, desplazamiento) in ESTILO_MODELOS.items():
+            datos = metricas[(metricas["validacion"] == validacion) & (metricas["modelo"] == modelo)]
+            x = np.arange(len(escenarios)) + desplazamiento
+            for posicion, escenario in zip(x, escenarios):
+                mae = datos.loc[datos["escenario"] == escenario, "mae"]
+                eje.scatter(np.full(len(mae), posicion), mae, s=12, color=color, alpha=0.35, linewidths=0)
+            medias = datos.groupby("escenario")["mae"].mean().reindex(escenarios)
+            eje.plot(x, medias, "-o", color=color, ms=6, label=nombre)
+        eje.set_xticks(range(len(escenarios)), list(ETIQUETAS_ESCENARIOS.values()), fontsize=8)
+        eje.set_title(f"Validación {validacion}")
+        eje.yaxis.set_major_formatter(formato_eje_es)
+        eje.grid(axis="y", alpha=0.3)
+    ejes[0].set_ylabel("MAE (€)")
+    ejes[0].legend(frameon=False)
+    fig.text(0.5, -0.02, "Línea: media de los cinco pliegues. Puntos: MAE de cada pliegue.",
+             ha="center", fontsize=9)
+    fig.tight_layout()
+    DIR_FIGURAS.mkdir(parents=True, exist_ok=True)
+    fig.savefig(DIR_FIGURAS / "02_mae_escenarios.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def procesador_y_memoria():
@@ -376,6 +419,7 @@ def main():
     calcular_mejoras(metricas).to_csv(DIR_MODELIZACION / "mejoras.csv", index=False, encoding="utf-8-sig")
     tabla_hiperparametros(metricas).to_csv(DIR_MODELIZACION / "hiperparametros.csv", index=False)
     unir_predicciones().to_csv(DIR_MODELIZACION / "predicciones.csv", index=False)
+    figura_mae(metricas)
 
     pd.set_option("display.width", 200)
     print("\nResumen (media de los pliegues):")
