@@ -34,7 +34,7 @@ Todos los indicadores se refieren a 2018, el año de los anuncios. La población
 ├── requirements.txt
 └── datos/
     ├── originales/           Ficheros tal como se descargan (no se modifican)
-    │   ├── ayuntamiento/     Paneles de indicadores 2018-2022
+    │   ├── ayuntamiento/     Paneles de indicadores 2019-2022
     │   └── idealista18/      Ficheros .rda del paquete idealista18
     ├── procesados/           Salidas intermedias (no se suben al repositorio)
     └── final/                Conjunto de estudio (no se sube al repositorio)
