@@ -33,8 +33,7 @@ Salida (en datos/procesados/interpretabilidad/):
     - importancia_bloques.csv: importancia de cada bloque y su peso sobre el total de bloques.
     - importancia_pliegues.csv: importancia de cada variable y bloque en cada pliegue.
     - shap_<modelo>_<validacion>.csv.gz: valor SHAP de cada variable para cada vivienda explicada.
-    - figuras/: importancia por bloque, variables más importantes y efecto de los indicadores de
-      contexto por distrito.
+    - figuras/: importancia de cada bloque y variables más importantes de XGBoost.
     Los resultados de cada pliegue se guardan en parciales/ a medida que se calculan, así que una
     ejecución interrumpida continúa donde se quedó.
 
@@ -57,7 +56,7 @@ import shap
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error
 
-from analisis_exploratorio import AZUL, ETIQUETAS_CONTEXTO, GRIS, formato_eje_es, numero_es
+from analisis_exploratorio import AZUL, GRIS, formato_eje_es
 from modelizacion import COLUMNA_PLIEGUE, METRICAS_CSV, MODELOS, SEMILLA, VALIDACIONES, cargar, crear_pipeline
 from rutas import DIR_INTERPRETABILIDAD
 
@@ -270,39 +269,6 @@ def figura_variables(variables, modelo="xgboost"):
     plt.close(fig)
 
 
-def figura_contexto(conjunto, escenarios, modelo="xgboost"):
-    """Contribución media de cada indicador de contexto en cada distrito frente a su valor."""
-    ficheros = {v: DIR_INTERPRETABILIDAD / f"shap_{modelo}_{v}.csv.gz" for v in VALIDACIONES}
-    if not all(f.exists() for f in ficheros.values()):
-        return
-    indicadores = [c for c in escenarios["D3"] if c not in escenarios["D1"]]
-    valores = conjunto.groupby("COD_DISTRITO")[indicadores].first()
-    fig, ejes = plt.subplots(2, 4, figsize=(13, 7), layout="constrained")
-    for validacion, color in (("aleatoria", GRIS), ("espacial", AZUL)):
-        shap_viviendas = pd.read_csv(ficheros[validacion], dtype={"ASSETID": str}).merge(
-            conjunto[["ASSETID", "COD_DISTRITO"]], on="ASSETID")
-        medias = shap_viviendas.groupby("COD_DISTRITO")[indicadores].mean()
-        for eje, indicador in zip(ejes.flat, indicadores):
-            titulo, unidad, factor = ETIQUETAS_CONTEXTO[indicador]
-            eje.scatter(valores.loc[medias.index, indicador] * factor, medias[indicador], color=color, s=20,
-                        label=NOMBRES_VALIDACIONES[validacion])
-            eje.set_title(titulo, fontsize=9)
-            eje.set_xlabel(unidad, fontsize=8)
-    for eje in ejes.flat:
-        eje.axhline(0, color="#333333", linewidth=0.6)
-        eje.xaxis.set_major_formatter(formato_eje_es)
-        eje.yaxis.set_major_formatter(formato_eje_es)
-        eje.tick_params(labelsize=7)
-    for eje in ejes[:, 0]:
-        eje.set_ylabel("Valor SHAP medio del distrito (log del precio)", fontsize=8)
-    fig.suptitle(f"Contribución de los indicadores de contexto en cada distrito ({NOMBRES_MODELOS[modelo]}, D3)",
-                 fontsize=11)
-    manejadores, etiquetas = ejes.flat[0].get_legend_handles_labels()
-    fig.legend(manejadores, etiquetas, loc="outside lower center", ncol=2, fontsize=9, frameon=False)
-    fig.savefig(DIR_FIGURAS / f"03_contexto_distritos_{modelo}.png", dpi=200)
-    plt.close(fig)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--modelos", nargs="+", choices=MODELOS, default=MODELOS)
@@ -324,7 +290,6 @@ def main():
     DIR_FIGURAS.mkdir(parents=True, exist_ok=True)
     figura_bloques(bloques)
     figura_variables(variables)
-    figura_contexto(conjunto, escenarios)
 
     pd.set_option("display.width", 200)
     print("\nImportancia de cada bloque (media del valor SHAP absoluto entre pliegues):")
